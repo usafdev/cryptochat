@@ -37,25 +37,7 @@ const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice
 // Seed data
 const now = new Date();
 const initialChatMessages: ChatMessages = {
-  "1": [
-    {
-      id: uid(),
-      content: "Hey, how are you?",
-      sender: "Alice",
-      timestamp: now,
-      isOwn: false,
-    },
-  ],
-  "2": [
-    {
-      id: uid(),
-      content: "Meeting at 3pm",
-      sender: "Bob",
-      timestamp: now,
-      isOwn: false,
-    },
-  ],
-  "3": [
+  "team": [
     {
       id: uid(),
       content: "New encryption protocol deployed",
@@ -68,24 +50,10 @@ const initialChatMessages: ChatMessages = {
 
 const initialChats: Chat[] = [
   {
-    id: "1",
-    name: "Alice",
-    lastMessage: initialChatMessages["1"][0].content,
-    timestamp: initialChatMessages["1"][0].timestamp,
-    unread: 2,
-  },
-  {
-    id: "2",
-    name: "Bob",
-    lastMessage: initialChatMessages["2"][0].content,
-    timestamp: initialChatMessages["2"][0].timestamp,
-    unread: 0,
-  },
-  {
-    id: "3",
+    id: "team",
     name: "Team Crypto",
-    lastMessage: initialChatMessages["3"][0].content,
-    timestamp: initialChatMessages["3"][0].timestamp,
+    lastMessage: initialChatMessages["team"][0].content,
+    timestamp: initialChatMessages["team"][0].timestamp,
     unread: 5,
   },
 ];
