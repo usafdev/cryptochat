@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import type { KeyboardEvent } from "react";
 import { Button } from "../components/ui/Button";
-import { Send, Lock, User, Settings, Search } from "lucide-react";
+import { Send, Lock, User, Settings, Search, Smile } from "lucide-react";
 
 interface Message {
   id: string;
@@ -93,6 +93,8 @@ function ChatShell() {
   const [search, setSearch] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessages>(initialChatMessages);
   const [friends, setFriends] = useState<string[]>([]);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const EMOJIS = ["😀","😂","😍","🤔","👍","🔥","👀","✅","❤️","🚀","🙌","😎","🤗","😢","😡"];
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement>(null);
@@ -419,16 +421,45 @@ function ChatShell() {
             </div>
 
             <div className="p-4 border-t border-gray-800">
-              <div className="flex gap-2">
-                <input
-                  ref={messageInputRef}
-                  type="text"
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Type a secure message..."
-                  className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 focus:outline-none focus:border-green-400"
-                />
+              <div className="flex gap-2 items-end">
+                {/* message box */}
+                <div className="relative flex-1">
+                  <input
+                    ref={messageInputRef}
+                    type="text"
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type a secure message..."
+                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 pr-10 focus:outline-none focus:border-green-400"
+                  />
+                  {/* emoji toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setShowEmoji(!showEmoji)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                    aria-label="Open emoji palette"
+                  >
+                    <Smile className="w-5 h-5" />
+                  </button>
+                  {/* static emoji palette */}
+                  {showEmoji && (
+                    <div className="absolute bottom-full mb-2 right-0 z-20 grid grid-cols-5 gap-1 p-2 bg-gray-900 border border-gray-700 rounded">
+                      {EMOJIS.map((e) => (
+                        <button
+                          key={e}
+                          onClick={() => {
+                            setMessage((m) => m + e);
+                            setShowEmoji(false); // close after pick (or remove this line to keep open)
+                          }}
+                          className="text-xl p-1 rounded hover:bg-gray-700"
+                        >
+                          {e}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <Button
                   onClick={handleSend}
                   className="bg-green-400 text-black hover:bg-green-500 disabled:opacity-50"
