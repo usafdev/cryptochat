@@ -500,8 +500,8 @@ function ChatShell() {
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <Lock className="w-16 h-16 text-gray-700 mx-auto mb-4" />
+          <div className="flex-1 flex flex-col items-center pt-20">
+            <Lock className="w-16 h-16 text-gray-700 mb-4" />
             <h2 className="text-xl font-semibold mb-2">Welcome to CryptoChat</h2>
             <p className="text-gray-400">Select a chat to start secure messaging</p>
           </div>
