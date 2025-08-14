@@ -58,6 +58,21 @@ function getFriends(): string[] {
     .map((r) => (r.from === me ? r.to : r.from));
 }
 
+function removeFriend(friend: string) {
+  const me = localStorage.getItem("loggedInUser")!;
+  const reqs = getReqs().filter(
+    (r) => !(r.status === "accepted" && ((r.from === me && r.to === friend) || (r.from === friend && r.to === me)))
+  );
+  localStorage.setItem(REQ_KEY, JSON.stringify(reqs));
+  // also wipe the DM history
+  const stateRaw = localStorage.getItem(STORAGE_KEY);
+  if (stateRaw) {
+    const state = JSON.parse(stateRaw);
+    delete state.chatMessages[friend];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+}
+
 /* ---------- Seed: only Team Crypto ---------- */
 const now = new Date();
 const initialChatMessages: ChatMessages = {
@@ -310,25 +325,46 @@ function ChatShell() {
           <div>
             <h3 className="text-sm font-semibold mb-2 text-green-400">Friends</h3>
             {friends.length === 0 && <p className="text-gray-500 text-xs">No friends yet</p>}
-            {friends.map((f) => (
-              <div
-                key={f}
-                className={`p-2 hover:bg-gray-900 cursor-pointer rounded ${
-                  selectedChat === f ? "bg-gray-900" : ""
-                }`}
-                onClick={() => handleSelectChat(f)}
-              >
-                <div className="flex justify-between items-center">
-                  <span className="font-medium truncate text-sm">{f}</span>
-                  <span className="text-xs text-gray-500">
-                    {formatTime(chatMessages[f]?.slice(-1)[0]?.timestamp || new Date(0))}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-400 truncate">
-                  {chatMessages[f]?.slice(-1)[0]?.content || "No messages yet"}
-                </p>
-              </div>
-            ))}
+{friends.map((f) => (
+  <div
+    key={f}
+    className={`group flex items-center justify-between p-2 hover:bg-gray-900 rounded cursor-pointer ${
+      selectedChat === f ? "bg-gray-900" : ""
+    }`}
+    onClick={(e) => {
+      // ignore if the click bubbled from the remove button
+      if ((e.target as HTMLElement).closest("button")) return;
+      handleSelectChat(f);
+    }}
+  >
+    <div className="flex-1 min-w-0">
+      <div className="flex justify-between items-center">
+        <span className="font-medium truncate text-sm">{f}</span>
+        <span className="text-xs text-gray-500">
+          {formatTime(chatMessages[f]?.slice(-1)[0]?.timestamp || new Date(0))}
+        </span>
+      </div>
+      <p className="text-xs text-gray-400 truncate">
+        {chatMessages[f]?.slice(-1)[0]?.content || "No messages yet"}
+      </p>
+    </div>
+
+    <button
+      title={`Remove ${f}`}
+      onClick={(e) => {
+        e.stopPropagation(); // block parent click
+        if (window.confirm(`Remove ${f} from friends?`)) {
+          removeFriend(f);
+          setFriends(getFriends());
+          if (selectedChat === f) setSelectedChat(null);
+        }
+      }}
+      className="ml-2 hidden group-hover:block text-red-400 hover:text-red-300 text-xs"
+    >
+      ✕
+    </button>
+  </div>
+))}
           </div>
         </div>
       </div>
