@@ -19,10 +19,11 @@ export default function LoginPage() {
     }
   };
 
-  useEffect(() => {
-    const loggedIn = localStorage.getItem("loggedInUser");
-    if (loggedIn) router.push("/chat");
-  }, []);
+  // Automatic Login
+  // useEffect(() => {
+  //   const loggedIn = localStorage.getItem("loggedInUser");
+  //   if (loggedIn) router.push("/chat");
+  // }, []);
 
   return (
     <main className="flex flex-col items-center justify-center h-screen text-white bg-black">
