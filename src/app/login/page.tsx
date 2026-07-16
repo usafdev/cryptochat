@@ -1,34 +1,74 @@
 "use client";
-import { useState, useEffect } from "react";
+
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
   const router = useRouter();
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
 
-  const handleLogin = () => {
-    const rawUsers = localStorage.getItem("users");
-    const users = rawUsers ? JSON.parse(rawUsers) : {};
-    if (users[username] && users[username] === password) {
-      localStorage.setItem("loggedInUser", username);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+
+  const handleLogin = async () => {
+    setError("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username,
+          password,
+        }),
+      });
+
+
+      const data = await response.json();
+
+
+      if (!response.ok) {
+        setError(data.error || "Login failed");
+        return;
+      }
+
+
+      // Temporary authentication storage
+      // We will replace this with sessions later
+      localStorage.setItem(
+        "loggedInUser",
+        data.username
+      );
+
+
       router.push("/chat");
-    } else {
-      setError("Invalid username or password");
+
+
+    } catch (error) {
+      console.error(error);
+      setError("Something went wrong");
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Automatic Login
-  // useEffect(() => {
-  //   const loggedIn = localStorage.getItem("loggedInUser");
-  //   if (loggedIn) router.push("/chat");
-  // }, []);
 
   return (
     <main className="flex flex-col items-center justify-center h-screen text-white bg-black">
-      <h1 className="text-3xl font-bold mb-4">Login</h1>
+
+      <h1 className="text-3xl font-bold mb-4">
+        Login
+      </h1>
+
+
       <div className="flex flex-col w-64 gap-3">
+
         <input
           type="text"
           value={username}
@@ -36,6 +76,8 @@ export default function LoginPage() {
           placeholder="Username"
           className="px-4 py-2 rounded bg-gray-900 border border-gray-700 text-white"
         />
+
+
         <input
           type="password"
           value={password}
@@ -43,18 +85,33 @@ export default function LoginPage() {
           placeholder="Password"
           className="px-4 py-2 rounded bg-gray-900 border border-gray-700 text-white"
         />
-        {error && <p className="text-red-400 text-sm">{error}</p>}
+
+
+        {error && (
+          <p className="text-red-400 text-sm">
+            {error}
+          </p>
+        )}
+
+
         <button
           onClick={handleLogin}
-          className="bg-green-400 text-black px-4 py-2 rounded hover:bg-green-500"
+          disabled={loading}
+          className="bg-green-400 text-black px-4 py-2 rounded hover:bg-green-500 disabled:opacity-50"
         >
-          Log In
+          {loading ? "Logging in..." : "Log In"}
         </button>
-        {/* New back-to-home link */}
-        <a href="/" className="text-sm text-green-400 hover:underline text-center mt-2">
+
+
+        <a
+          href="/"
+          className="text-sm text-green-400 hover:underline text-center mt-2"
+        >
           ← Back to Home
         </a>
+
       </div>
+
     </main>
   );
 }

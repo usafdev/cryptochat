@@ -5,22 +5,41 @@ import { useRouter } from "next/navigation";
 export default function SignupPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState(""); //newtest
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
-  const handleSignup = () => {
-    const rawUsers = localStorage.getItem("users");
-    const users = rawUsers ? JSON.parse(rawUsers) : {};
+  const handleSignup = async () => {
+    setError("");
 
-    if (users[username]) {
-      setError("Username already taken");
-      return;
+    try {
+      const response = await fetch("/api/signup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username,
+          email,
+          password,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || "Signup failed");
+        return;
+      }
+
+      localStorage.setItem("loggedInUser", data.username);
+
+      router.push("/chat");
+
+    } catch (error) {
+      console.error(error);
+      setError("Something went wrong");
     }
-
-    users[username] = password;
-    localStorage.setItem("users", JSON.stringify(users));
-    localStorage.setItem("loggedInUser", username);
-    router.push("/chat");
   };
 
   return (
@@ -32,6 +51,13 @@ export default function SignupPage() {
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           placeholder="Choose a username"
+          className="px-4 py-2 rounded bg-gray-900 border border-gray-700 text-white"
+        />
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="Email address"
           className="px-4 py-2 rounded bg-gray-900 border border-gray-700 text-white"
         />
         <input
