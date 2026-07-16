@@ -1,6 +1,7 @@
 // src/app/page.tsx
 "use client";
 
+import { sendMessage } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import type { KeyboardEvent } from "react";
@@ -186,22 +187,43 @@ function ChatShell() {
     setChatMessages((prev) => (prev[chatId] ? prev : { ...prev, [chatId]: [] }));
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = message.trim();
+
     if (!trimmed || !selectedChat) return;
-    const newMsg: Message = {
-      id: uid(),
-      content: trimmed,
-      sender: loggedInUser,
-      timestamp: new Date(),
-      isOwn: true,
-    };
-    setChatMessages((prev) => ({
-      ...prev,
-      [selectedChat]: [...(prev[selectedChat] ?? []), newMsg],
-    }));
-    setMessage("");
-    requestAnimationFrame(scrollToBottom);
+
+    try {
+
+      const savedMessage = await sendMessage(
+        selectedChat,
+        trimmed
+      );
+
+      const newMsg: Message = {
+        id: savedMessage.id,
+        content: savedMessage.content,
+        sender: loggedInUser,
+        timestamp: new Date(savedMessage.createdAt),
+        isOwn: true,
+      };
+
+
+      setChatMessages((prev) => ({
+        ...prev,
+        [selectedChat]: [
+          ...(prev[selectedChat] ?? []),
+          newMsg,
+        ],
+      }));
+
+
+      setMessage("");
+
+      requestAnimationFrame(scrollToBottom);
+
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
