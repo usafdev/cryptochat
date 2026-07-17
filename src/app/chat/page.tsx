@@ -8,6 +8,24 @@ import type { KeyboardEvent } from "react";
 import { Button } from "../components/ui/Button";
 import { Send, Lock, User, Settings, Search, Smile } from "lucide-react";
 
+interface Friend {
+  id: string;
+  username: string;
+}
+
+interface FriendRequest {
+  id: string;
+  status: string;
+  from: {
+    id: string;
+    username: string;
+  };
+  receiver: {
+    id: string;
+    username: string;
+  };
+}
+
 interface Message {
   id: string;
   content: string;
@@ -30,48 +48,63 @@ const STORAGE_KEY = "cryptochat_state_v1";
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 /* ---------- Friend-request helpers ---------- */
-type FriendReq = { from: string; to: string; status: "sent" | "received" | "accepted" };
-const REQ_KEY = "friend_requests";
+async function sendFriendRequest(receiverId: string) {
+  const res = await fetch("/api/friends/request", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      receiverId,
+    }),
+  });
 
-function getReqs(): FriendReq[] {
-  const raw = typeof window !== "undefined" ? localStorage.getItem(REQ_KEY) : null;
-  return raw ? JSON.parse(raw) : [];
-}
-function sendRequest(from: string, to: string) {
-  const reqs = getReqs();
-  if (from === to || reqs.some((r) => r.from === from && r.to === to)) return;
-  reqs.push({ from, to, status: "sent" });
-  localStorage.setItem(REQ_KEY, JSON.stringify(reqs));
-}
-function acceptRequest(from: string, to: string) {
-  const reqs = getReqs().filter((r) => !(r.from === from && r.to === to));
-  reqs.push({ from, to, status: "accepted" });
-  localStorage.setItem(REQ_KEY, JSON.stringify(reqs));
-}
-function declineRequest(from: string, to: string) {
-  const reqs = getReqs().filter((r) => !(r.from === from && r.to === to));
-  localStorage.setItem(REQ_KEY, JSON.stringify(reqs));
-}
-function getFriends(): string[] {
-  const me = typeof window !== "undefined" ? localStorage.getItem("loggedInUser") : null;
-  return getReqs()
-    .filter((r) => r.status === "accepted" && (r.from === me || r.to === me))
-    .map((r) => (r.from === me ? r.to : r.from));
+  return res.json();
 }
 
-function removeFriend(friend: string) {
-  const me = localStorage.getItem("loggedInUser")!;
-  const reqs = getReqs().filter(
-    (r) => !(r.status === "accepted" && ((r.from === me && r.to === friend) || (r.from === friend && r.to === me)))
-  );
-  localStorage.setItem(REQ_KEY, JSON.stringify(reqs));
-  // also wipe the DM history
-  const stateRaw = localStorage.getItem(STORAGE_KEY);
-  if (stateRaw) {
-    const state = JSON.parse(stateRaw);
-    delete state.chatMessages[friend];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }
+
+async function acceptFriendRequest(requestId: string) {
+  const res = await fetch("/api/friends/accept", {
+    method: "POST",
+    headers:{
+      "Content-Type":"application/json",
+    },
+    body: JSON.stringify({
+      requestId,
+    }),
+  });
+
+  return res.json();
+}
+
+
+async function declineFriendRequest(requestId:string){
+  const res = await fetch("/api/friends/decline", {
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+    },
+    body:JSON.stringify({
+      requestId,
+    }),
+  });
+
+  return res.json();
+}
+
+
+async function cancelFriendRequest(requestId:string){
+  const res = await fetch("/api/friends/cancel", {
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+    },
+    body:JSON.stringify({
+      requestId,
+    }),
+  });
+
+  return res.json();
 }
 
 /* ---------- Seed: only Team Crypto ---------- */
@@ -93,19 +126,49 @@ function ChatShell() {
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessages>(initialChatMessages);
-  const [friends, setFriends] = useState<string[]>([]);
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [requests, setRequests] = useState<FriendRequest[]>([]);
   const [showEmoji, setShowEmoji] = useState(false);
   const EMOJIS = ["😀","😂","😍","🤔","👍","🔥","👀","✅","❤️","🚀","🙌","😎","🤗","😢","😡"];
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement>(null);
 
-  const loggedInUser = typeof window !== "undefined"
-    ? localStorage.getItem("loggedInUser") || "You"
-    : "You";
+  const loggedInUserData =
+    typeof window !== "undefined"
+      ? (() => {
+          try {
+            return JSON.parse(localStorage.getItem("loggedInUser") || "{}");
+          } catch {
+            return {};
+          }
+        })()
+      : {};
+
+  const loggedInUser = loggedInUserData.username || "You";
 
   /* ---------- Sync friends ---------- */
-  useEffect(() => setFriends(getFriends()), []);
+  useEffect(() => {
+    loadFriends();
+  }, []);
+
+  async function loadFriends() {
+    try {
+      const res = await fetch("/api/friends");
+
+      if (!res.ok) {
+        throw new Error("Failed to load friends");
+      }
+
+      const data = await res.json();
+
+      setFriends(data.friends ?? []);
+      setRequests(data.requests ?? []);
+
+    } catch (error) {
+      console.error("loadFriends error:", error);
+    }
+  }
 
   /* ---------- Derive chats ---------- */
   const chats = useMemo(() => {
@@ -116,11 +179,13 @@ function ChatShell() {
       timestamp: chatMessages["team"]?.slice(-1)[0]?.timestamp || new Date(),
       unread: 0,
     };
-    const dmChats: Chat[] = friends.map((f) => ({
-      id: f,
-      name: f,
-      lastMessage: chatMessages[f]?.slice(-1)[0]?.content || "No messages yet",
-      timestamp: chatMessages[f]?.slice(-1)[0]?.timestamp || new Date(0),
+    const dmChats: Chat[] = friends.map((friend) => ({
+      id: friend.id,
+      name: friend.username,
+      lastMessage:
+        chatMessages[friend.id]?.slice(-1)[0]?.content || "No messages yet",
+      timestamp:
+        chatMessages[friend.id]?.slice(-1)[0]?.timestamp || new Date(0),
       unread: 0,
     }));
     return [team, ...dmChats].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
@@ -138,15 +203,10 @@ function ChatShell() {
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
         selectedChat: string | null;
-        chats: (Omit<Chat, "timestamp"> & { timestamp: string })[];
         chatMessages: Record<string, (Omit<Message, "timestamp"> & { timestamp: string })[]>;
       };
-      const revivedChats: Chat[] = parsed.chats.map((c) => ({
-        ...c,
-        timestamp: new Date(c.timestamp),
-      }));
       const revivedChatMessages: ChatMessages = Object.fromEntries(
-        Object.entries(parsed.chatMessages).map(([chatId, msgs]) => [
+        Object.entries(parsed.chatMessages ?? {}).map(([chatId, msgs]) => [
           chatId,
           msgs.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })),
         ])
@@ -276,31 +336,57 @@ function ChatShell() {
                 type="text"
                 placeholder="username"
                 className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-green-400"
-                onKeyDown={(e) => {
+                onKeyDown={async (e) => {
                   if (e.key !== "Enter") return;
                   const input = e.target as HTMLInputElement;
                   const target = input.value.trim();
                   if (!target || target === loggedInUser) return;
-                  const users = JSON.parse(localStorage.getItem("users") || "{}");
-                  if (!users[target]) { alert("User not found."); return; }
-                  sendRequest(loggedInUser, target);
-                  setFriends(getFriends()); // re-render
+                  const response = await fetch(
+                    `/api/users?username=${target}`
+                  );
+
+                  const users = await response.json();
+
+                  if (users.length === 0) {
+                    alert("User not found.");
+                    return;
+                  }
+
+                  const targetUser = users[0];
+
+                  await sendFriendRequest(targetUser.id);
+
                   input.value = "";
+
+                  loadFriends(); // re-render
                 }}
               />
               <Button
                 variant="ghost"
                 size="sm"
                 className="text-xs"
-                onClick={(e) => {
+                onClick={async (e) => {
                   const input = (e.target as HTMLElement).previousElementSibling as HTMLInputElement;
                   const target = input.value.trim();
                   if (!target || target === loggedInUser) return;
-                  const users = JSON.parse(localStorage.getItem("users") || "{}");
-                  if (!users[target]) { alert("User not found."); return; }
-                  sendRequest(loggedInUser, target);
-                  setFriends(getFriends());
+                  const response = await fetch(
+                    `/api/users?username=${target}`
+                  );
+
+                  const users = await response.json();
+
+                  if (users.length === 0) {
+                    alert("User not found.");
+                    return;
+                  }
+
+                  const targetUser = users[0];
+
+                  await sendFriendRequest(targetUser.id);
+
                   input.value = "";
+
+                  loadFriends();
                 }}
               >
                 Send
@@ -312,26 +398,26 @@ function ChatShell() {
           <div className="border-b border-gray-800 pb-3">
             <h3 className="text-sm font-semibold mb-2 text-green-400">Incoming</h3>
             <ul className="text-xs space-y-1">
-              {getReqs()
-                .filter((r) => r.to === loggedInUser && r.status !== "accepted")
-                .map((r) => (
-                  <li key={r.from} className="flex justify-between items-center hover:bg-gray-800 px-1 rounded">
-                    <span>{r.from} wants to be friends</span>
+              {requests
+              .filter((r)=>r.status==="pending")
+              .map((r)=>(
+                  <li key={r.id} className="flex justify-between items-center hover:bg-gray-800 px-1 rounded">
+                    <span>{r.from.username} wants to be friends</span>
                     <div className="space-x-1">
                       <button
                         className="text-green-400"
-                        onClick={() => {
-                          acceptRequest(r.from, r.to);
-                          setFriends(getFriends());
+                        onClick={async () => {
+                          await acceptFriendRequest(r.id);
+                          loadFriends();
                         }}
                       >
                         ✓
                       </button>
                       <button
                         className="text-red-400"
-                        onClick={() => {
-                          declineRequest(r.from, r.to);
-                          setFriends(getFriends());
+                        onClick={async () => {
+                          await declineFriendRequest(r.id);
+                          loadFriends();
                         }}
                       >
                         ✕
@@ -339,7 +425,7 @@ function ChatShell() {
                     </div>
                   </li>
                 ))}
-              {getReqs().filter((r) => r.to === loggedInUser && r.status !== "accepted").length === 0 && (
+              {requests.filter((r) => r.status === "pending").length === 0 && (
                 <p className="text-gray-500 text-xs">No pending requests</p>
               )}
             </ul>
@@ -349,38 +435,47 @@ function ChatShell() {
           <div>
             <h3 className="text-sm font-semibold mb-2 text-green-400">Friends</h3>
             {friends.length === 0 && <p className="text-gray-500 text-xs">No friends yet</p>}
-              {friends.map((f) => (
+              {friends.map((friend)=>(
                 <div
-                  key={f}
+                  key={friend.id}
                   className={`group flex items-center justify-between p-2 hover:bg-gray-900 rounded cursor-pointer ${
-                    selectedChat === f ? "bg-gray-900" : ""
+                    selectedChat === friend.id ? "bg-gray-900" : ""
                   }`}
                   onClick={(e) => {
                     // ignore if the click bubbled from the remove button
                     if ((e.target as HTMLElement).closest("button")) return;
-                    handleSelectChat(f);
+                    handleSelectChat(friend.id);
                   }}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center">
-                      <span className="font-medium truncate text-sm">{f}</span>
+                      <span className="font-medium truncate text-sm">{friend.username}</span>
                       <span className="text-xs text-gray-500">
-                        {formatTime(chatMessages[f]?.slice(-1)[0]?.timestamp || new Date(0))}
+                        {formatTime(chatMessages[friend.id]?.slice(-1)[0]?.timestamp || new Date(0))}
                       </span>
                     </div>
                     <p className="text-xs text-gray-400 truncate">
-                      {chatMessages[f]?.slice(-1)[0]?.content || "No messages yet"}
+                      {chatMessages[friend.id]?.slice(-1)[0]?.content || "No messages yet"}
                     </p>
                   </div>
 
                   <button
-                    title={`Remove ${f}`}
-                    onClick={(e) => {
+                    title={`Remove ${friend.username}`}
+                    onClick={async (e) => {
                       e.stopPropagation(); // block parent click
-                      if (window.confirm(`Remove ${f} from friends?`)) {
-                        removeFriend(f);
-                        setFriends(getFriends());
-                        if (selectedChat === f) setSelectedChat(null);
+                      if (window.confirm(`Remove ${friend.username} from friends?`)) {
+                        await fetch("/api/friends/remove",{
+                          method:"POST",
+                          headers:{
+                            "Content-Type":"application/json"
+                          },
+                          body:JSON.stringify({
+                            friendId:friend.id
+                          })
+                          });
+
+                          loadFriends();
+                        if (selectedChat === friend.id) setSelectedChat(null);
                       }
                     }}
                     className="ml-2 hidden group-hover:block text-red-400 hover:text-red-300 text-xs"
@@ -393,31 +488,27 @@ function ChatShell() {
           {/* Outgoing Requests */}
             <div className="border-b border-gray-800 pb-3">
               <h3 className="text-sm font-semibold mb-2 text-green-400">Outgoing</h3>
-              <ul className="text-xs space-y-1">
-                {getReqs()
-                  .filter((r) => r.from === loggedInUser && r.status === "sent")
-                  .map((r) => (
-                    <li key={r.to} className="flex justify-between items-center px-1">
-                      <span>→ {r.to}</span>
-                      <button
-                        className="text-red-400 ml-2"
-                        onClick={() => {
-                          const reqs = getReqs().filter(
-                            (req) => !(req.from === loggedInUser && req.to === r.to)
-                          );
-                          localStorage.setItem(REQ_KEY, JSON.stringify(reqs));
-                          setFriends(getFriends()); // forces re-render
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                {getReqs().filter((r) => r.from === loggedInUser && r.status === "sent")
-                  .length === 0 && (
-                  <p className="text-gray-500 text-xs">None</p>
-                )}
-              </ul>
+              {requests
+                .filter((r) => r.status === "pending")
+                .map((r) => (
+                  <div key={r.id} className="flex justify-between text-xs">
+                    <span>
+                    → {r.receiver?.username || "Unknown"}
+                    </span>
+                    <button
+                      className="text-red-400"
+                      onClick={async () => {
+                        await cancelFriendRequest(r.id);
+                        loadFriends();
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              {requests.filter((r) => r.status === "pending").length === 0 && (
+                <p className="text-gray-500 text-xs">None</p>
+              )}
             </div>
         </div>
       </div>
@@ -538,9 +629,15 @@ export default function CryptoChat() {
   const router = useRouter();
   const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
   useEffect(() => {
-    const username = localStorage.getItem("loggedInUser");
-    if (!username) router.push("/login");
-    else setLoggedInUser(username);
+    const user = JSON.parse(
+      localStorage.getItem("loggedInUser") || "{}"
+    );
+
+    if (!user.id) {
+      router.push("/login");
+    } else {
+      setLoggedInUser(user.username);
+    }
   }, [router]);
   const handleLogout = () => {
     localStorage.removeItem("loggedInUser");
