@@ -43,7 +43,10 @@ export default function LoginPage() {
       // We will replace this with sessions later
       localStorage.setItem(
         "loggedInUser",
-        data.username
+        JSON.stringify({
+          id: data.id,
+          username: data.username,
+        })
       );
 
 

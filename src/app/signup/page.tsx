@@ -32,7 +32,13 @@ export default function SignupPage() {
         return;
       }
 
-      localStorage.setItem("loggedInUser", data.username);
+      localStorage.setItem(
+        "loggedInUser",
+        JSON.stringify({
+          id: data.id,
+          username: data.username,
+        })
+      );
 
       router.push("/chat");
 
