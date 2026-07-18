@@ -1,4 +1,4 @@
-// src/app/page.tsx
+// src/app/chat/page.tsx
 "use client";
 
 import { sendMessage } from "@/lib/api";
@@ -16,11 +16,13 @@ interface Friend {
 interface FriendRequest {
   id: string;
   status: string;
-  from: {
+  senderId: string;
+  receiverId: string;
+  sender?: {
     id: string;
     username: string;
   };
-  receiver: {
+  receiver?: {
     id: string;
     username: string;
   };
@@ -47,66 +49,6 @@ type ChatMessages = Record<string, Message[]>;
 const STORAGE_KEY = "cryptochat_state_v1";
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-/* ---------- Friend-request helpers ---------- */
-async function sendFriendRequest(receiverId: string) {
-  const res = await fetch("/api/friends/request", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      receiverId,
-    }),
-  });
-
-  return res.json();
-}
-
-
-async function acceptFriendRequest(requestId: string) {
-  const res = await fetch("/api/friends/accept", {
-    method: "POST",
-    headers:{
-      "Content-Type":"application/json",
-    },
-    body: JSON.stringify({
-      requestId,
-    }),
-  });
-
-  return res.json();
-}
-
-
-async function declineFriendRequest(requestId:string){
-  const res = await fetch("/api/friends/decline", {
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-    },
-    body:JSON.stringify({
-      requestId,
-    }),
-  });
-
-  return res.json();
-}
-
-
-async function cancelFriendRequest(requestId:string){
-  const res = await fetch("/api/friends/cancel", {
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-    },
-    body:JSON.stringify({
-      requestId,
-    }),
-  });
-
-  return res.json();
-}
-
 /* ---------- Seed: only Team Crypto ---------- */
 const now = new Date();
 const initialChatMessages: ChatMessages = {
@@ -129,32 +71,99 @@ function ChatShell() {
   const [friends, setFriends] = useState<Friend[]>([]);
   const [requests, setRequests] = useState<FriendRequest[]>([]);
   const [showEmoji, setShowEmoji] = useState(false);
+  
+  const [userId, setUserId] = useState<string | null>(null);
+  const [loggedInUser, setLoggedInUser] = useState<string>("You");
+
   const EMOJIS = ["😀","😂","😍","🤔","👍","🔥","👀","✅","❤️","🚀","🙌","😎","🤗","😢","😡"];
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
 
-  const loggedInUserData =
-    typeof window !== "undefined"
-      ? (() => {
-          try {
-            return JSON.parse(localStorage.getItem("loggedInUser") || "{}");
-          } catch {
-            return {};
-          }
-        })()
-      : {};
+  // Initialize user data from localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const user = JSON.parse(localStorage.getItem("loggedInUser") || "{}");
+        if (user.id) {
+          setUserId(user.id);
+          setLoggedInUser(user.username || "You");
+        } else {
+          router.push("/login");
+        }
+      } catch {
+        router.push("/login");
+      }
+    }
+  }, [router]);
 
-  const loggedInUser = loggedInUserData.username || "You";
+  /* ---------- Friend-request helpers ---------- */
+  async function sendFriendRequest(senderId: string, receiverId: string) {
+    const res = await fetch("/api/friends/request", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        senderId,
+        receiverId,
+      }),
+    });
+    return res.json();
+  }
+
+  async function acceptFriendRequest(requestId: string) {
+    const res = await fetch("/api/friends/accept", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requestId,
+      }),
+    });
+    return res.json();
+  }
+
+  async function declineFriendRequest(requestId: string) {
+    const res = await fetch("/api/friends/decline", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requestId,
+      }),
+    });
+    return res.json();
+  }
+
+  async function cancelFriendRequest(requestId: string, currentUserId: string) {
+    const res = await fetch("/api/friends/cancel", {
+      method: "DELETE", // Matched to your API route
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requestId,
+        userId: currentUserId,
+      }),
+    });
+    return res.json();
+  }
 
   /* ---------- Sync friends ---------- */
   useEffect(() => {
-    loadFriends();
-  }, []);
+    if (userId) {
+      loadFriends();
+    }
+  }, [userId]);
 
   async function loadFriends() {
+    if (!userId) return;
     try {
-      const res = await fetch("/api/friends");
+      const res = await fetch(`/api/friends?userId=${userId}`);
 
       if (!res.ok) {
         throw new Error("Failed to load friends");
@@ -253,11 +262,7 @@ function ChatShell() {
     if (!trimmed || !selectedChat) return;
 
     try {
-
-      const savedMessage = await sendMessage(
-        selectedChat,
-        trimmed
-      );
+      const savedMessage = await sendMessage(selectedChat, trimmed);
 
       const newMsg: Message = {
         id: savedMessage.id,
@@ -267,7 +272,6 @@ function ChatShell() {
         isOwn: true,
       };
 
-
       setChatMessages((prev) => ({
         ...prev,
         [selectedChat]: [
@@ -276,11 +280,8 @@ function ChatShell() {
         ],
       }));
 
-
       setMessage("");
-
       requestAnimationFrame(scrollToBottom);
-
     } catch (error) {
       console.error(error);
     }
@@ -340,11 +341,9 @@ function ChatShell() {
                   if (e.key !== "Enter") return;
                   const input = e.target as HTMLInputElement;
                   const target = input.value.trim();
-                  if (!target || target === loggedInUser) return;
-                  const response = await fetch(
-                    `/api/users?username=${target}`
-                  );
-
+                  if (!target || target === loggedInUser || !userId) return;
+                  
+                  const response = await fetch(`/api/users?username=${target}`);
                   const users = await response.json();
 
                   if (users.length === 0) {
@@ -353,11 +352,8 @@ function ChatShell() {
                   }
 
                   const targetUser = users[0];
-
-                  await sendFriendRequest(targetUser.id);
-
+                  await sendFriendRequest(userId, targetUser.id);
                   input.value = "";
-
                   loadFriends(); // re-render
                 }}
               />
@@ -368,11 +364,9 @@ function ChatShell() {
                 onClick={async (e) => {
                   const input = (e.target as HTMLElement).previousElementSibling as HTMLInputElement;
                   const target = input.value.trim();
-                  if (!target || target === loggedInUser) return;
-                  const response = await fetch(
-                    `/api/users?username=${target}`
-                  );
+                  if (!target || target === loggedInUser || !userId) return;
 
+                  const response = await fetch(`/api/users?username=${target}`);
                   const users = await response.json();
 
                   if (users.length === 0) {
@@ -381,11 +375,8 @@ function ChatShell() {
                   }
 
                   const targetUser = users[0];
-
-                  await sendFriendRequest(targetUser.id);
-
+                  await sendFriendRequest(userId, targetUser.id);
                   input.value = "";
-
                   loadFriends();
                 }}
               >
@@ -399,10 +390,10 @@ function ChatShell() {
             <h3 className="text-sm font-semibold mb-2 text-green-400">Incoming</h3>
             <ul className="text-xs space-y-1">
               {requests
-              .filter((r)=>r.status==="pending")
-              .map((r)=>(
+                .filter((r) => r.status === "pending" && r.receiverId === userId)
+                .map((r) => (
                   <li key={r.id} className="flex justify-between items-center hover:bg-gray-800 px-1 rounded">
-                    <span>{r.from.username} wants to be friends</span>
+                    <span>{r.sender?.username} wants to be friends</span>
                     <div className="space-x-1">
                       <button
                         className="text-green-400"
@@ -425,7 +416,7 @@ function ChatShell() {
                     </div>
                   </li>
                 ))}
-              {requests.filter((r) => r.status === "pending").length === 0 && (
+              {requests.filter((r) => r.status === "pending" && r.receiverId === userId).length === 0 && (
                 <p className="text-gray-500 text-xs">No pending requests</p>
               )}
             </ul>
@@ -435,81 +426,84 @@ function ChatShell() {
           <div>
             <h3 className="text-sm font-semibold mb-2 text-green-400">Friends</h3>
             {friends.length === 0 && <p className="text-gray-500 text-xs">No friends yet</p>}
-              {friends.map((friend)=>(
-                <div
-                  key={friend.id}
-                  className={`group flex items-center justify-between p-2 hover:bg-gray-900 rounded cursor-pointer ${
-                    selectedChat === friend.id ? "bg-gray-900" : ""
-                  }`}
-                  onClick={(e) => {
-                    // ignore if the click bubbled from the remove button
-                    if ((e.target as HTMLElement).closest("button")) return;
-                    handleSelectChat(friend.id);
-                  }}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-center">
-                      <span className="font-medium truncate text-sm">{friend.username}</span>
-                      <span className="text-xs text-gray-500">
-                        {formatTime(chatMessages[friend.id]?.slice(-1)[0]?.timestamp || new Date(0))}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-400 truncate">
-                      {chatMessages[friend.id]?.slice(-1)[0]?.content || "No messages yet"}
-                    </p>
+            {friends.map((friend) => (
+              <div
+                key={friend.id}
+                className={`group flex items-center justify-between p-2 hover:bg-gray-900 rounded cursor-pointer ${
+                  selectedChat === friend.id ? "bg-gray-900" : ""
+                }`}
+                onClick={(e) => {
+                  // ignore if the click bubbled from the remove button
+                  if ((e.target as HTMLElement).closest("button")) return;
+                  handleSelectChat(friend.id);
+                }}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium truncate text-sm">{friend.username}</span>
+                    <span className="text-xs text-gray-500">
+                      {formatTime(chatMessages[friend.id]?.slice(-1)[0]?.timestamp || new Date(0))}
+                    </span>
                   </div>
+                  <p className="text-xs text-gray-400 truncate">
+                    {chatMessages[friend.id]?.slice(-1)[0]?.content || "No messages yet"}
+                  </p>
+                </div>
 
+                
+
+                <button
+                  title={`Remove ${friend.username}`}
+                  onClick={async (e) => {
+                    e.stopPropagation(); // block parent click
+                    if (window.confirm(`Remove ${friend.username} from friends?`)) {
+                      await fetch("/api/friends/remove", {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                          userId: userId,       // <-- Added this for security
+                          friendId: friend.id,
+                        }),
+                      });
+
+                      loadFriends();
+                      if (selectedChat === friend.id) setSelectedChat(null);
+                    }
+                  }}
+                  className="ml-2 hidden group-hover:block text-red-400 hover:text-red-300 text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Outgoing Requests */}
+          <div className="border-b border-gray-800 pb-3">
+            <h3 className="text-sm font-semibold mb-2 text-green-400">Outgoing</h3>
+            {requests
+              .filter((r) => r.status === "pending" && r.senderId === userId)
+              .map((r) => (
+                <div key={r.id} className="flex justify-between items-center text-xs hover:bg-gray-800 px-1 rounded">
+                  <span>→ {r.receiver?.username || "Unknown"}</span>
                   <button
-                    title={`Remove ${friend.username}`}
-                    onClick={async (e) => {
-                      e.stopPropagation(); // block parent click
-                      if (window.confirm(`Remove ${friend.username} from friends?`)) {
-                        await fetch("/api/friends/remove",{
-                          method:"POST",
-                          headers:{
-                            "Content-Type":"application/json"
-                          },
-                          body:JSON.stringify({
-                            friendId:friend.id
-                          })
-                          });
-
-                          loadFriends();
-                        if (selectedChat === friend.id) setSelectedChat(null);
-                      }
+                    className="text-red-400"
+                    onClick={async () => {
+                      if (!userId) return;
+                      await cancelFriendRequest(r.id, userId);
+                      loadFriends();
                     }}
-                    className="ml-2 hidden group-hover:block text-red-400 hover:text-red-300 text-xs"
                   >
                     ✕
                   </button>
                 </div>
               ))}
+            {requests.filter((r) => r.status === "pending" && r.senderId === userId).length === 0 && (
+              <p className="text-gray-500 text-xs">None</p>
+            )}
           </div>
-          {/* Outgoing Requests */}
-            <div className="border-b border-gray-800 pb-3">
-              <h3 className="text-sm font-semibold mb-2 text-green-400">Outgoing</h3>
-              {requests
-                .filter((r) => r.status === "pending")
-                .map((r) => (
-                  <div key={r.id} className="flex justify-between text-xs">
-                    <span>
-                    → {r.receiver?.username || "Unknown"}
-                    </span>
-                    <button
-                      className="text-red-400"
-                      onClick={async () => {
-                        await cancelFriendRequest(r.id);
-                        loadFriends();
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              {requests.filter((r) => r.status === "pending").length === 0 && (
-                <p className="text-gray-500 text-xs">None</p>
-              )}
-            </div>
         </div>
       </div>
 
@@ -592,7 +586,7 @@ function ChatShell() {
                           key={e}
                           onClick={() => {
                             setMessage((m) => m + e);
-                            setShowEmoji(false); // close after pick (or remove this line to keep open)
+                            setShowEmoji(false); // close after pick
                           }}
                           className="text-xl p-1 rounded hover:bg-gray-700"
                         >
@@ -628,27 +622,30 @@ function ChatShell() {
 export default function CryptoChat() {
   const router = useRouter();
   const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
+  
   useEffect(() => {
-    const user = JSON.parse(
-      localStorage.getItem("loggedInUser") || "{}"
-    );
-
-    if (!user.id) {
-      router.push("/login");
-    } else {
-      setLoggedInUser(user.username);
+    if (typeof window !== "undefined") {
+      const user = JSON.parse(localStorage.getItem("loggedInUser") || "{}");
+      if (!user.id) {
+        router.push("/login");
+      } else {
+        setLoggedInUser(user.username);
+      }
     }
   }, [router]);
+
   const handleLogout = () => {
     localStorage.removeItem("loggedInUser");
     router.push("/");
   };
+
   if (loggedInUser === null) return null;
+
   return (
     <div className="relative h-screen">
       <button
         onClick={handleLogout}
-        className="absolute top-4 right-4 px-3 py-1 border border-gray-700 text-sm text-gray-300 rounded hover:bg-red-500 hover:text-white"
+        className="absolute top-4 right-4 px-3 py-1 border border-gray-700 text-sm text-gray-300 rounded hover:bg-red-500 hover:text-white z-50"
       >
         Logout
       </button>
