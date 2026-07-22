@@ -3,7 +3,7 @@
 
 import { sendMessage } from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import type { KeyboardEvent } from "react";
 import { Button } from "../components/ui/Button";
 import { Send, Lock, User, Settings, Search, Smile } from "lucide-react";
@@ -149,7 +149,7 @@ function ChatShell() {
     return res.json();
   }
 
-  async function loadFriendsAndConversations() {
+  const loadFriendsAndConversations = useCallback(async () => {
     if (!userId) return;
     try {
       const [friendsRes, convRes] = await Promise.all([
@@ -170,13 +170,13 @@ function ChatShell() {
     } catch (error) {
       console.error("loadFriendsAndConversations error:", error);
     }
-  }
+  }, [userId]);
 
   useEffect(() => {
     if (userId) {
       loadFriendsAndConversations();
     }
-  }, [userId]);
+  }, [userId, loadFriendsAndConversations]);
 
   // Fetch messages from DB whenever a chat is selected and userId is ready
   useEffect(() => {
@@ -184,10 +184,18 @@ function ChatShell() {
 
     const fetchMessages = async () => {
       try {
-        const res = await fetch(`/api/messages?conversationId=${selectedChat}`);
+        // SECURITY: Pass userId to verify authorization on the backend
+        const res = await fetch(`/api/messages?conversationId=${selectedChat}&userId=${userId}`);
+        
         if (res.ok) {
           const msgs = await res.json();
-          const formattedMsgs: Message[] = msgs.map((m: any) => ({
+          const formattedMsgs: Message[] = msgs.map((m: { 
+            id: string; 
+            content: string; 
+            sender?: { username?: string }; 
+            createdAt: string; 
+            senderId: string; 
+          }) => ({
             id: m.id,
             content: m.content,
             sender: m.sender?.username || "Unknown",
@@ -199,6 +207,9 @@ function ChatShell() {
             ...prev,
             [selectedChat]: formattedMsgs,
           }));
+        } else if (res.status === 403) {
+          // If unauthorized, clear the selected chat to prevent UI glitches
+          setSelectedChat(null);
         }
       } catch (error) {
         console.error("Failed to fetch messages:", error);
@@ -220,7 +231,7 @@ function ChatShell() {
     const dmChats: Chat[] = conversations.map((conv) => {
       const otherParticipant = conv.participants.find((p) => p.id !== userId);
       const friendName = otherParticipant?.username || "Unknown";
-      const lastMsg = conv.messages[0]; // ordered desc, take 1
+      const lastMsg = conv.messages[0]; 
       
       return {
         id: conv.id,
@@ -239,15 +250,25 @@ function ChatShell() {
     [selectedChat, chatMessages]
   );
 
-  // Restore state from localStorage on mount
+  // Restore state from localStorage on mount (SECURITY: Tied to userId)
   useEffect(() => {
+    if (!userId) return; 
     try {
       const raw = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
       if (!raw) return;
+      
       const parsed = JSON.parse(raw) as {
+        userId: string;
         selectedChat: string | null;
         chatMessages: Record<string, (Omit<Message, "timestamp"> & { timestamp: string })[]>;
       };
+      
+      // SECURITY CHECK: Only restore state if it belongs to the current user
+      if (parsed.userId !== userId) {
+        localStorage.removeItem(STORAGE_KEY); // Wipe stale data from previous user
+        return;
+      }
+
       const revivedChatMessages: ChatMessages = Object.fromEntries(
         Object.entries(parsed.chatMessages ?? {}).map(([chatId, msgs]) => [
           chatId,
@@ -256,13 +277,17 @@ function ChatShell() {
       );
       setChatMessages((prev) => ({ ...prev, ...revivedChatMessages }));
       setSelectedChat(parsed.selectedChat);
-    } catch { /* ignore */ }
-  }, []);
+    } catch { 
+      localStorage.removeItem(STORAGE_KEY); // Clear corrupted storage
+    }
+  }, [userId]);
 
   // Save state to localStorage on change
   useEffect(() => {
+    if (!userId) return;
     try {
       const payload = {
+        userId, // Tie storage to the specific user
         selectedChat,
         chats: chats.map((c) => ({ ...c, timestamp: c.timestamp.toISOString() })),
         chatMessages: Object.fromEntries(
@@ -274,7 +299,7 @@ function ChatShell() {
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch { /* ignore */ }
-  }, [selectedChat, chats, chatMessages]);
+  }, [selectedChat, chats, chatMessages, userId]);
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   useEffect(() => { scrollToBottom(); }, [selectedChat, currentMessages.length]);
@@ -482,7 +507,7 @@ function ChatShell() {
           </div>
         </div>
 
-        {/* 🌟 NEW: Logged-in User Footer */}
+        {/* Logged-in User Footer */}
         <div className="p-4 border-t border-gray-800 flex items-center gap-3 bg-gray-900/50">
           <div className="w-9 h-9 bg-green-400 rounded-full flex items-center justify-center text-black font-bold text-sm shrink-0">
             {loggedInUser ? loggedInUser.charAt(0).toUpperCase() : "U"}
@@ -607,6 +632,7 @@ export default function CryptoChat() {
 
   const handleLogout = () => {
     localStorage.removeItem("loggedInUser");
+    localStorage.removeItem(STORAGE_KEY); // SECURITY: Clear chat state on logout
     router.push("/");
   };
 

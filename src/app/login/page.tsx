@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,7 +12,6 @@ export default function LoginPage() {
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
 
   const handleLogin = async () => {
     setError("");
@@ -29,15 +29,12 @@ export default function LoginPage() {
         }),
       });
 
-
       const data = await response.json();
-
 
       if (!response.ok) {
         setError(data.error || "Login failed");
         return;
       }
-
 
       // Temporary authentication storage
       // We will replace this with sessions later
@@ -49,9 +46,7 @@ export default function LoginPage() {
         })
       );
 
-
       router.push("/chat");
-
 
     } catch (error) {
       console.error(error);
@@ -61,17 +56,13 @@ export default function LoginPage() {
     }
   };
 
-
   return (
     <main className="flex flex-col items-center justify-center h-screen text-white bg-black">
-
       <h1 className="text-3xl font-bold mb-4">
         Login
       </h1>
 
-
       <div className="flex flex-col w-64 gap-3">
-
         <input
           type="text"
           value={username}
@@ -79,7 +70,6 @@ export default function LoginPage() {
           placeholder="Username"
           className="px-4 py-2 rounded bg-gray-900 border border-gray-700 text-white"
         />
-
 
         <input
           type="password"
@@ -89,13 +79,11 @@ export default function LoginPage() {
           className="px-4 py-2 rounded bg-gray-900 border border-gray-700 text-white"
         />
 
-
         {error && (
           <p className="text-red-400 text-sm">
             {error}
           </p>
         )}
-
 
         <button
           onClick={handleLogin}
@@ -105,16 +93,13 @@ export default function LoginPage() {
           {loading ? "Logging in..." : "Log In"}
         </button>
 
-
-        <a
+        <Link
           href="/"
           className="text-sm text-green-400 hover:underline text-center mt-2"
         >
           ← Back to Home
-        </a>
-
+        </Link>
       </div>
-
     </main>
   );
 }

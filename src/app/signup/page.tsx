@@ -1,11 +1,12 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function SignupPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
-  const [email, setEmail] = useState(""); //newtest
+  const [email, setEmail] = useState(""); 
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
@@ -80,9 +81,9 @@ export default function SignupPage() {
         >
           Sign Up
         </button>
-        <a href="/" className="text-sm text-green-400 hover:underline text-center mt-2">
+        <Link href="/" className="text-sm text-green-400 hover:underline text-center mt-2">
           ← Back to Home
-        </a>
+        </Link>
       </div>
     </main>
   );
