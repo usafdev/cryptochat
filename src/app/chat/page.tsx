@@ -18,14 +18,8 @@ interface FriendRequest {
   status: string;
   senderId: string;
   receiverId: string;
-  sender?: {
-    id: string;
-    username: string;
-  };
-  receiver?: {
-    id: string;
-    username: string;
-  };
+  sender?: { id: string; username: string };
+  receiver?: { id: string; username: string };
 }
 
 interface Message {
@@ -44,12 +38,17 @@ interface Chat {
   unread: number;
 }
 
+interface Conversation {
+  id: string;
+  participants: { id: string; username: string }[];
+  messages: { content: string; createdAt: string }[];
+}
+
 type ChatMessages = Record<string, Message[]>;
 
 const STORAGE_KEY = "cryptochat_state_v1";
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-/* ---------- Seed: only Team Crypto ---------- */
 const now = new Date();
 const initialChatMessages: ChatMessages = {
   team: [
@@ -70,6 +69,7 @@ function ChatShell() {
   const [chatMessages, setChatMessages] = useState<ChatMessages>(initialChatMessages);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [requests, setRequests] = useState<FriendRequest[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [showEmoji, setShowEmoji] = useState(false);
   
   const [userId, setUserId] = useState<string | null>(null);
@@ -98,88 +98,116 @@ function ChatShell() {
     }
   }, [router]);
 
-  /* ---------- Friend-request helpers ---------- */
   async function sendFriendRequest(senderId: string, receiverId: string) {
     const res = await fetch("/api/friends/request", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        senderId,
-        receiverId,
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senderId, receiverId }),
     });
+    if (res.ok) loadFriendsAndConversations();
     return res.json();
   }
 
   async function acceptFriendRequest(requestId: string) {
     const res = await fetch("/api/friends/accept", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        requestId,
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId }),
     });
+    if (res.ok) loadFriendsAndConversations();
     return res.json();
   }
 
   async function declineFriendRequest(requestId: string) {
     const res = await fetch("/api/friends/decline", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        requestId,
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId }),
     });
+    if (res.ok) loadFriendsAndConversations();
     return res.json();
   }
 
   async function cancelFriendRequest(requestId: string, currentUserId: string) {
     const res = await fetch("/api/friends/cancel", {
-      method: "DELETE", // Matched to your API route
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        requestId,
-        userId: currentUserId,
-      }),
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, userId: currentUserId }),
     });
+    if (res.ok) loadFriendsAndConversations();
     return res.json();
   }
 
-  /* ---------- Sync friends ---------- */
-  useEffect(() => {
-    if (userId) {
-      loadFriends();
-    }
-  }, [userId]);
+  async function removeFriend(friendId: string) {
+    if (!userId) return;
+    const res = await fetch("/api/friends/remove", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, friendId }),
+    });
+    if (res.ok) loadFriendsAndConversations();
+    return res.json();
+  }
 
-  async function loadFriends() {
+  async function loadFriendsAndConversations() {
     if (!userId) return;
     try {
-      const res = await fetch(`/api/friends?userId=${userId}`);
+      const [friendsRes, convRes] = await Promise.all([
+        fetch(`/api/friends?userId=${userId}`),
+        fetch(`/api/conversations?userId=${userId}`)
+      ]);
 
-      if (!res.ok) {
-        throw new Error("Failed to load friends");
+      if (friendsRes.ok) {
+        const friendsData = await friendsRes.json();
+        setFriends(friendsData.friends ?? []);
+        setRequests(friendsData.requests ?? []);
       }
 
-      const data = await res.json();
-
-      setFriends(data.friends ?? []);
-      setRequests(data.requests ?? []);
-
+      if (convRes.ok) {
+        const convData = await convRes.json();
+        setConversations(convData);
+      }
     } catch (error) {
-      console.error("loadFriends error:", error);
+      console.error("loadFriendsAndConversations error:", error);
     }
   }
 
-  /* ---------- Derive chats ---------- */
+  useEffect(() => {
+    if (userId) {
+      loadFriendsAndConversations();
+    }
+  }, [userId]);
+
+  // 🌟 NEW: Fetch messages from DB whenever a chat is selected and userId is ready
+  useEffect(() => {
+    if (!selectedChat || selectedChat === "team" || !userId) return;
+
+    const fetchMessages = async () => {
+      try {
+        const res = await fetch(`/api/messages?conversationId=${selectedChat}`);
+        if (res.ok) {
+          const msgs = await res.json();
+          const formattedMsgs: Message[] = msgs.map((m: any) => ({
+            id: m.id,
+            content: m.content,
+            sender: m.sender?.username || "Unknown",
+            timestamp: new Date(m.createdAt),
+            isOwn: m.senderId === userId,
+          }));
+          
+          setChatMessages((prev) => ({
+            ...prev,
+            [selectedChat]: formattedMsgs,
+          }));
+        }
+      } catch (error) {
+        console.error("Failed to fetch messages:", error);
+      }
+    };
+
+    fetchMessages();
+  }, [selectedChat, userId]);
+
   const chats = useMemo(() => {
     const team: Chat = {
       id: "team",
@@ -188,24 +216,30 @@ function ChatShell() {
       timestamp: chatMessages["team"]?.slice(-1)[0]?.timestamp || new Date(),
       unread: 0,
     };
-    const dmChats: Chat[] = friends.map((friend) => ({
-      id: friend.id,
-      name: friend.username,
-      lastMessage:
-        chatMessages[friend.id]?.slice(-1)[0]?.content || "No messages yet",
-      timestamp:
-        chatMessages[friend.id]?.slice(-1)[0]?.timestamp || new Date(0),
-      unread: 0,
-    }));
+
+    const dmChats: Chat[] = conversations.map((conv) => {
+      const otherParticipant = conv.participants.find((p) => p.id !== userId);
+      const friendName = otherParticipant?.username || "Unknown";
+      const lastMsg = conv.messages[0]; // ordered desc, take 1
+      
+      return {
+        id: conv.id,
+        name: friendName,
+        lastMessage: lastMsg?.content || "No messages yet",
+        timestamp: lastMsg ? new Date(lastMsg.createdAt) : new Date(0),
+        unread: 0,
+      };
+    });
+
     return [team, ...dmChats].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-  }, [friends, chatMessages]);
+  }, [conversations, chatMessages, userId]);
 
   const currentMessages = useMemo(
     () => (selectedChat ? chatMessages[selectedChat] ?? [] : []),
     [selectedChat, chatMessages]
   );
 
-  /* ---------- Persistence ---------- */
+  // Restore state from localStorage on mount
   useEffect(() => {
     try {
       const raw = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
@@ -220,13 +254,13 @@ function ChatShell() {
           msgs.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })),
         ])
       );
-      setChatMessages(revivedChatMessages);
+      // Merge with existing state so we don't lose the initial "team" chat seed
+      setChatMessages((prev) => ({ ...prev, ...revivedChatMessages }));
       setSelectedChat(parsed.selectedChat);
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
   }, []);
 
+  // Save state to localStorage on change
   useEffect(() => {
     try {
       const payload = {
@@ -240,29 +274,41 @@ function ChatShell() {
         ),
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
   }, [selectedChat, chats, chatMessages]);
 
-  /* ---------- Scroll & focus ---------- */
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   useEffect(() => { scrollToBottom(); }, [selectedChat, currentMessages.length]);
   useEffect(() => { if (selectedChat) messageInputRef.current?.focus(); }, [selectedChat]);
 
-  /* ---------- Handlers ---------- */
   const handleSelectChat = (chatId: string) => {
     setSelectedChat(chatId);
-    setChatMessages((prev) => (prev[chatId] ? prev : { ...prev, [chatId]: [] }));
+    // The useEffect above will automatically handle fetching the messages
   };
 
   const handleSend = async () => {
     const trimmed = message.trim();
+    if (!trimmed || !selectedChat || !userId) return;
 
-    if (!trimmed || !selectedChat) return;
+    if (selectedChat === "team") {
+      const newMsg: Message = {
+        id: uid(),
+        content: trimmed,
+        sender: loggedInUser,
+        timestamp: new Date(),
+        isOwn: true,
+      };
+      setChatMessages((prev) => ({
+        ...prev,
+        [selectedChat]: [...(prev[selectedChat] ?? []), newMsg],
+      }));
+      setMessage("");
+      requestAnimationFrame(scrollToBottom);
+      return;
+    }
 
     try {
-      const savedMessage = await sendMessage(selectedChat, trimmed);
+      const savedMessage = await sendMessage(selectedChat, trimmed, userId);
 
       const newMsg: Message = {
         id: savedMessage.id,
@@ -274,16 +320,14 @@ function ChatShell() {
 
       setChatMessages((prev) => ({
         ...prev,
-        [selectedChat]: [
-          ...(prev[selectedChat] ?? []),
-          newMsg,
-        ],
+        [selectedChat]: [...(prev[selectedChat] ?? []), newMsg],
       }));
 
       setMessage("");
       requestAnimationFrame(scrollToBottom);
     } catch (error) {
       console.error(error);
+      alert(error instanceof Error ? error.message : "Failed to send message");
     }
   };
 
@@ -300,7 +344,6 @@ function ChatShell() {
     <div className="flex h-screen bg-black text-white">
       {/* Sidebar */}
       <div className="w-80 border-r border-gray-800 flex flex-col">
-        {/* Header */}
         <div className="p-4 border-b border-gray-800">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-xl font-bold flex items-center gap-2" aria-label="App title">
@@ -312,10 +355,7 @@ function ChatShell() {
             </Button>
           </div>
           <div className="relative">
-            <Search
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
-              aria-hidden="true"
-            />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" aria-hidden="true" />
             <input
               type="text"
               value={search}
@@ -327,9 +367,7 @@ function ChatShell() {
           </div>
         </div>
 
-        {/* Friends & Chats */}
         <div className="flex-1 overflow-y-auto p-2 space-y-4">
-          {/* Send Friend Request */}
           <div className="border-b border-gray-800 pb-3">
             <h3 className="text-sm font-semibold mb-2 text-green-400">Send Request</h3>
             <div className="flex gap-1 mb-2">
@@ -345,16 +383,10 @@ function ChatShell() {
                   
                   const response = await fetch(`/api/users?username=${target}`);
                   const users = await response.json();
+                  if (users.length === 0) { alert("User not found."); return; }
 
-                  if (users.length === 0) {
-                    alert("User not found.");
-                    return;
-                  }
-
-                  const targetUser = users[0];
-                  await sendFriendRequest(userId, targetUser.id);
+                  await sendFriendRequest(userId, users[0].id);
                   input.value = "";
-                  loadFriends(); // re-render
                 }}
               />
               <Button
@@ -368,16 +400,10 @@ function ChatShell() {
 
                   const response = await fetch(`/api/users?username=${target}`);
                   const users = await response.json();
+                  if (users.length === 0) { alert("User not found."); return; }
 
-                  if (users.length === 0) {
-                    alert("User not found.");
-                    return;
-                  }
-
-                  const targetUser = users[0];
-                  await sendFriendRequest(userId, targetUser.id);
+                  await sendFriendRequest(userId, users[0].id);
                   input.value = "";
-                  loadFriends();
                 }}
               >
                 Send
@@ -385,91 +411,53 @@ function ChatShell() {
             </div>
           </div>
 
-          {/* Incoming Requests */}
           <div className="border-b border-gray-800 pb-3">
             <h3 className="text-sm font-semibold mb-2 text-green-400">Incoming</h3>
             <ul className="text-xs space-y-1">
-              {requests
-                .filter((r) => r.status === "pending" && r.receiverId === userId)
-                .map((r) => (
-                  <li key={r.id} className="flex justify-between items-center hover:bg-gray-800 px-1 rounded">
-                    <span>{r.sender?.username} wants to be friends</span>
-                    <div className="space-x-1">
-                      <button
-                        className="text-green-400"
-                        onClick={async () => {
-                          await acceptFriendRequest(r.id);
-                          loadFriends();
-                        }}
-                      >
-                        ✓
-                      </button>
-                      <button
-                        className="text-red-400"
-                        onClick={async () => {
-                          await declineFriendRequest(r.id);
-                          loadFriends();
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </li>
-                ))}
+              {requests.filter((r) => r.status === "pending" && r.receiverId === userId).map((r) => (
+                <li key={r.id} className="flex justify-between items-center hover:bg-gray-800 px-1 rounded">
+                  <span>{r.sender?.username} wants to be friends</span>
+                  <div className="space-x-1">
+                    <button className="text-green-400" onClick={() => acceptFriendRequest(r.id)}>✓</button>
+                    <button className="text-red-400" onClick={() => declineFriendRequest(r.id)}>✕</button>
+                  </div>
+                </li>
+              ))}
               {requests.filter((r) => r.status === "pending" && r.receiverId === userId).length === 0 && (
                 <p className="text-gray-500 text-xs">No pending requests</p>
               )}
             </ul>
           </div>
 
-          {/* Accepted Friends (DM chats) */}
           <div>
             <h3 className="text-sm font-semibold mb-2 text-green-400">Friends</h3>
             {friends.length === 0 && <p className="text-gray-500 text-xs">No friends yet</p>}
-            {friends.map((friend) => (
+            {chats.filter(c => c.id !== "team").map((chat) => (
               <div
-                key={friend.id}
+                key={chat.id}
                 className={`group flex items-center justify-between p-2 hover:bg-gray-900 rounded cursor-pointer ${
-                  selectedChat === friend.id ? "bg-gray-900" : ""
+                  selectedChat === chat.id ? "bg-gray-900" : ""
                 }`}
                 onClick={(e) => {
-                  // ignore if the click bubbled from the remove button
                   if ((e.target as HTMLElement).closest("button")) return;
-                  handleSelectChat(friend.id);
+                  handleSelectChat(chat.id);
                 }}
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-center">
-                    <span className="font-medium truncate text-sm">{friend.username}</span>
-                    <span className="text-xs text-gray-500">
-                      {formatTime(chatMessages[friend.id]?.slice(-1)[0]?.timestamp || new Date(0))}
-                    </span>
+                    <span className="font-medium truncate text-sm">{chat.name}</span>
+                    <span className="text-xs text-gray-500">{formatTime(chat.timestamp)}</span>
                   </div>
-                  <p className="text-xs text-gray-400 truncate">
-                    {chatMessages[friend.id]?.slice(-1)[0]?.content || "No messages yet"}
-                  </p>
+                  <p className="text-xs text-gray-400 truncate">{chat.lastMessage}</p>
                 </div>
-
-                
-
                 <button
-                  title={`Remove ${friend.username}`}
+                  title={`Remove ${chat.name}`}
                   onClick={async (e) => {
-                    e.stopPropagation(); // block parent click
-                    if (window.confirm(`Remove ${friend.username} from friends?`)) {
-                      await fetch("/api/friends/remove", {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                          userId: userId,       // <-- Added this for security
-                          friendId: friend.id,
-                        }),
-                      });
-
-                      loadFriends();
-                      if (selectedChat === friend.id) setSelectedChat(null);
+                    e.stopPropagation();
+                    const friend = friends.find(f => f.username === chat.name);
+                    if (friend && window.confirm(`Remove ${chat.name} from friends?`)) {
+                      await removeFriend(friend.id);
+                      if (selectedChat === chat.id) setSelectedChat(null);
                     }
                   }}
                   className="ml-2 hidden group-hover:block text-red-400 hover:text-red-300 text-xs"
@@ -480,26 +468,14 @@ function ChatShell() {
             ))}
           </div>
 
-          {/* Outgoing Requests */}
           <div className="border-b border-gray-800 pb-3">
             <h3 className="text-sm font-semibold mb-2 text-green-400">Outgoing</h3>
-            {requests
-              .filter((r) => r.status === "pending" && r.senderId === userId)
-              .map((r) => (
-                <div key={r.id} className="flex justify-between items-center text-xs hover:bg-gray-800 px-1 rounded">
-                  <span>→ {r.receiver?.username || "Unknown"}</span>
-                  <button
-                    className="text-red-400"
-                    onClick={async () => {
-                      if (!userId) return;
-                      await cancelFriendRequest(r.id, userId);
-                      loadFriends();
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+            {requests.filter((r) => r.status === "pending" && r.senderId === userId).map((r) => (
+              <div key={r.id} className="flex justify-between items-center text-xs hover:bg-gray-800 px-1 rounded">
+                <span>→ {r.receiver?.username || "Unknown"}</span>
+                <button className="text-red-400" onClick={() => userId && cancelFriendRequest(r.id, userId)}>✕</button>
+              </div>
+            ))}
             {requests.filter((r) => r.status === "pending" && r.senderId === userId).length === 0 && (
               <p className="text-gray-500 text-xs">None</p>
             )}
@@ -527,29 +503,16 @@ function ChatShell() {
               </div>
             </div>
 
-            <div
-              className="flex-1 overflow-y-auto p-4 space-y-4"
-              role="log"
-              aria-live="polite"
-              aria-relevant="additions text"
-            >
+            <div className="flex-1 overflow-y-auto p-4 space-y-4" role="log" aria-live="polite" aria-relevant="additions text">
               {currentMessages.length === 0 && (
                 <div className="text-center text-gray-500 text-sm mt-8">No messages yet. Say hi!</div>
               )}
               {currentMessages.map((msg) => (
                 <div key={msg.id} className={`flex ${msg.isOwn ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={`max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg break-words ${
-                      msg.isOwn ? "bg-green-400 text-black" : "bg-gray-800 text-white"
-                    }`}
-                  >
-                    <p className={`text-xs mb-1 ${msg.isOwn ? "text-gray-800" : "text-gray-300"}`}>
-                      {msg.sender}
-                    </p>
+                  <div className={`max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg break-words ${msg.isOwn ? "bg-green-400 text-black" : "bg-gray-800 text-white"}`}>
+                    <p className={`text-xs mb-1 ${msg.isOwn ? "text-gray-800" : "text-gray-300"}`}>{msg.sender}</p>
                     <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                    <p className={`text-2xs mt-1 ${msg.isOwn ? "text-gray-700" : "text-gray-400"}`}>
-                      {formatTime(msg.timestamp)}
-                    </p>
+                    <p className={`text-2xs mt-1 ${msg.isOwn ? "text-gray-700" : "text-gray-400"}`}>{formatTime(msg.timestamp)}</p>
                   </div>
                 </div>
               ))}
@@ -558,7 +521,6 @@ function ChatShell() {
 
             <div className="p-4 border-t border-gray-800">
               <div className="flex gap-2 items-end">
-                {/* message box */}
                 <div className="relative flex-1">
                   <input
                     ref={messageInputRef}
@@ -569,7 +531,6 @@ function ChatShell() {
                     placeholder="Type a secure message..."
                     className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 pr-10 focus:outline-none focus:border-green-400"
                   />
-                  {/* emoji toggle */}
                   <button
                     type="button"
                     onClick={() => setShowEmoji(!showEmoji)}
@@ -578,16 +539,12 @@ function ChatShell() {
                   >
                     <Smile className="w-5 h-5" />
                   </button>
-                  {/* static emoji palette */}
                   {showEmoji && (
                     <div className="absolute bottom-full mb-2 right-0 z-20 grid grid-cols-5 gap-1 p-2 bg-gray-900 border border-gray-700 rounded">
                       {EMOJIS.map((e) => (
                         <button
                           key={e}
-                          onClick={() => {
-                            setMessage((m) => m + e);
-                            setShowEmoji(false); // close after pick
-                          }}
+                          onClick={() => { setMessage((m) => m + e); setShowEmoji(false); }}
                           className="text-xl p-1 rounded hover:bg-gray-700"
                         >
                           {e}

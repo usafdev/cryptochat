@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-
     const { requestId } = body;
 
     if (!requestId) {
@@ -15,9 +14,7 @@ export async function POST(req: Request) {
     }
 
     const existingRequest = await prisma.friendRequest.findUnique({
-      where: {
-        id: requestId,
-      },
+      where: { id: requestId },
     });
 
     if (!existingRequest) {
@@ -34,20 +31,41 @@ export async function POST(req: Request) {
       );
     }
 
-    const request = await prisma.friendRequest.update({
+    // 1. Update request status
+    await prisma.friendRequest.update({
+      where: { id: requestId },
+      data: { status: "accepted" },
+    });
+
+    // 2. Ensure a conversation exists for these two users
+    const existingConversation = await prisma.conversation.findFirst({
       where: {
-        id: requestId,
-      },
-      data: {
-        status: "accepted",
+        isGroup: false,
+        AND: [
+          { participants: { some: { id: existingRequest.senderId } } },
+          { participants: { some: { id: existingRequest.receiverId } } },
+        ],
       },
     });
 
-    return NextResponse.json(request);
+    if (!existingConversation) {
+      await prisma.conversation.create({
+        data: {
+          isGroup: false,
+          participants: {
+            connect: [
+              { id: existingRequest.senderId },
+              { id: existingRequest.receiverId },
+            ],
+          },
+        },
+      });
+    }
 
-  } catch(error) {
+    return NextResponse.json({ success: true });
+
+  } catch (error) {
     console.error(error);
-
     return NextResponse.json(
       { error: "Server error" },
       { status: 500 }
