@@ -178,7 +178,7 @@ function ChatShell() {
     }
   }, [userId]);
 
-  // 🌟 NEW: Fetch messages from DB whenever a chat is selected and userId is ready
+  // Fetch messages from DB whenever a chat is selected and userId is ready
   useEffect(() => {
     if (!selectedChat || selectedChat === "team" || !userId) return;
 
@@ -254,7 +254,6 @@ function ChatShell() {
           msgs.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })),
         ])
       );
-      // Merge with existing state so we don't lose the initial "team" chat seed
       setChatMessages((prev) => ({ ...prev, ...revivedChatMessages }));
       setSelectedChat(parsed.selectedChat);
     } catch { /* ignore */ }
@@ -283,7 +282,6 @@ function ChatShell() {
 
   const handleSelectChat = (chatId: string) => {
     setSelectedChat(chatId);
-    // The useEffect above will automatically handle fetching the messages
   };
 
   const handleSend = async () => {
@@ -344,6 +342,7 @@ function ChatShell() {
     <div className="flex h-screen bg-black text-white">
       {/* Sidebar */}
       <div className="w-80 border-r border-gray-800 flex flex-col">
+        {/* Header */}
         <div className="p-4 border-b border-gray-800">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-xl font-bold flex items-center gap-2" aria-label="App title">
@@ -367,6 +366,7 @@ function ChatShell() {
           </div>
         </div>
 
+        {/* Scrollable Friends & Chats Area */}
         <div className="flex-1 overflow-y-auto p-2 space-y-4">
           <div className="border-b border-gray-800 pb-3">
             <h3 className="text-sm font-semibold mb-2 text-green-400">Send Request</h3>
@@ -479,6 +479,20 @@ function ChatShell() {
             {requests.filter((r) => r.status === "pending" && r.senderId === userId).length === 0 && (
               <p className="text-gray-500 text-xs">None</p>
             )}
+          </div>
+        </div>
+
+        {/* 🌟 NEW: Logged-in User Footer */}
+        <div className="p-4 border-t border-gray-800 flex items-center gap-3 bg-gray-900/50">
+          <div className="w-9 h-9 bg-green-400 rounded-full flex items-center justify-center text-black font-bold text-sm shrink-0">
+            {loggedInUser ? loggedInUser.charAt(0).toUpperCase() : "U"}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-white truncate">{loggedInUser}</p>
+            <p className="text-xs text-green-400 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+              Online
+            </p>
           </div>
         </div>
       </div>
