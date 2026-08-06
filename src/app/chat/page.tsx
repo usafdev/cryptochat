@@ -1,4 +1,3 @@
-// src/app/chat/page.tsx
 "use client";
 
 import { sendMessage } from "@/lib/api";
@@ -97,6 +96,14 @@ function ChatShell() {
       }
     }
   }, [router]);
+
+  const handleLogout = () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("loggedInUser");
+      localStorage.removeItem(STORAGE_KEY); // SECURITY: Clear chat state on logout
+    }
+    router.push("/");
+  };
 
   async function sendFriendRequest(senderId: string, receiverId: string) {
     const res = await fetch("/api/friends/request", {
@@ -519,6 +526,13 @@ function ChatShell() {
               Online
             </p>
           </div>
+          <button
+            onClick={handleLogout}
+            className="px-3 py-1 border border-gray-700 text-sm text-gray-300 rounded hover:bg-red-500 hover:text-white transition-colors shrink-0"
+            aria-label="Logout"
+          >
+            Logout
+          </button>
         </div>
       </div>
 
@@ -630,23 +644,7 @@ export default function CryptoChat() {
     }
   }, [router]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("loggedInUser");
-    localStorage.removeItem(STORAGE_KEY); // SECURITY: Clear chat state on logout
-    router.push("/");
-  };
-
   if (loggedInUser === null) return null;
 
-  return (
-    <div className="relative h-screen">
-      <button
-        onClick={handleLogout}
-        className="absolute top-4 right-4 px-3 py-1 border border-gray-700 text-sm text-gray-300 rounded hover:bg-red-500 hover:text-white z-50"
-      >
-        Logout
-      </button>
-      <ChatShell />
-    </div>
-  );
+  return <ChatShell />;
 }
