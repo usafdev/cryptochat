@@ -462,7 +462,7 @@ function ChatShell() {
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold mb-2 text-green-400">Friends</h3>
+            <h3 className="text-sm font-semibold mb-2 text-green-400">Conversations</h3>
             {friends.length === 0 && <p className="text-gray-500 text-xs">No friends yet</p>}
             {chats.filter(c => c.id !== "team").map((chat) => (
               <div
@@ -482,20 +482,32 @@ function ChatShell() {
                   </div>
                   <p className="text-xs text-gray-400 truncate">{chat.lastMessage}</p>
                 </div>
+                {friends.some((friend) => friend.username === chat.name) && (
                 <button
                   title={`Remove ${chat.name}`}
                   onClick={async (e) => {
                     e.stopPropagation();
-                    const friend = friends.find(f => f.username === chat.name);
-                    if (friend && window.confirm(`Remove ${chat.name} from friends?`)) {
+
+                    const friend = friends.find(
+                      (f) => f.username === chat.name
+                    );
+
+                    if (
+                      friend &&
+                      window.confirm(`Remove ${chat.name} from friends?`)
+                    ) {
                       await removeFriend(friend.id);
-                      if (selectedChat === chat.id) setSelectedChat(null);
+
+                      if (selectedChat === chat.id) {
+                        setSelectedChat(null);
+                      }
                     }
                   }}
                   className="ml-2 hidden group-hover:block text-red-400 hover:text-red-300 text-xs"
                 >
                   ✕
                 </button>
+              )}
               </div>
             ))}
           </div>
