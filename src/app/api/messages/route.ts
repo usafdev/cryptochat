@@ -83,6 +83,13 @@ export async function POST(req: Request) {
           },
         },
       },
+      include: {
+        participants: {
+          select: {
+            id: true,
+          },
+        },
+      },
     });
 
     if (!conversation) {
@@ -92,6 +99,44 @@ export async function POST(req: Request) {
       );
     }
 
+    // Find the other participant in the conversation
+    const recipient = conversation.participants.find(
+      (participant) => participant.id !== senderId
+    );
+
+    if (!recipient) {
+      return NextResponse.json(
+        { error: "Recipient not found" },
+        { status: 400 }
+      );
+    }
+
+    // SECURITY: Make sure the sender and recipient are STILL friends
+    const friendship = await prisma.friendRequest.findFirst({
+      where: {
+        status: "accepted",
+        OR: [
+          {
+            senderId: senderId,
+            receiverId: recipient.id,
+          },
+          {
+            senderId: recipient.id,
+            receiverId: senderId,
+          },
+        ],
+      },
+    });
+
+    // If they removed each other, the friendship record no longer exists
+    if (!friendship) {
+      return NextResponse.json(
+        { error: "You can only message your friends." },
+        { status: 403 }
+      );
+    }
+
+    // Only create the message if they are still friends
     const message = await prisma.message.create({
       data: {
         content,
