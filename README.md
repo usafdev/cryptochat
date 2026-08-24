@@ -7,7 +7,7 @@ CryptoChat is a privacy-focused messaging application designed to implement end-
 ![Home](assets/Screenshot_11.png)
 ## Key Highlights
 
-- End-to-end encrypted messaging
+- End-to-end encryption (Work in progress)
 - User authentication and account security
 - Real-time communication with WebSockets
 - Built using React (Typescript), Next.js, Tailwind CSS v4, and PostgreSQL with Prisma ORM  
