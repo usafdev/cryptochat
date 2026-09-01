@@ -1,8 +1,17 @@
+import { encryptMessagePayload } from "@/lib/crypto";
+
 export async function sendMessage(
   conversationId: string,
   content: string,
-  senderId: string
+  senderId: string,
+  recipientPublicKey: string
 ) {
+  if (!recipientPublicKey) {
+    throw new Error("Encryption key missing for this recipient");
+  }
+
+  const encryptedPayload = await encryptMessagePayload(content, recipientPublicKey);
+
   const response = await fetch("/api/messages", {
     method: "POST",
     headers: {
@@ -10,13 +19,12 @@ export async function sendMessage(
     },
     body: JSON.stringify({
       conversationId,
-      content,
+      content: JSON.stringify(encryptedPayload),
       senderId,
     }),
   });
 
   if (!response.ok) {
-    // Extract the actual error message from the backend for better debugging
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.error || "Failed to send message");
   }

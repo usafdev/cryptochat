@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { createSessionCookie } from "@/lib/session";
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
 
@@ -13,9 +14,17 @@ export async function POST(req: Request) {
       );
     }
 
+    const normalizedUsername = String(username).trim();
+    if (!normalizedUsername || normalizedUsername.length < 3) {
+      return NextResponse.json(
+        { error: "Username must be at least 3 characters long" },
+        { status: 400 }
+      );
+    }
+
     const user = await prisma.user.findUnique({
       where: {
-        username,
+        username: normalizedUsername,
       },
     });
 
@@ -26,10 +35,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const passwordMatch = await bcrypt.compare(
-      password,
-      user.passwordHash
-    );
+    const passwordMatch = await bcrypt.compare(password, user.passwordHash);
 
     if (!passwordMatch) {
       return NextResponse.json(
@@ -38,12 +44,15 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       id: user.id,
       username: user.username,
       email: user.email,
+      publicKey: user.publicKey ?? null,
     });
 
+    response.cookies.set(createSessionCookie(user.id, user.username));
+    return response;
   } catch (error) {
     console.error(error);
 

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
 
 // GET messages for a conversation
@@ -7,11 +8,19 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const conversationId = searchParams.get("conversationId");
     const userId = searchParams.get("userId");
+    const sessionUser = await getSessionUser();
 
     if (!conversationId || !userId) {
       return NextResponse.json(
         { error: "Missing conversationId or userId" },
         { status: 400 }
+      );
+    }
+
+    if (!sessionUser || sessionUser.userId !== userId) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
       );
     }
 
@@ -65,11 +74,19 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const { content, senderId, conversationId } = await req.json();
+    const sessionUser = await getSessionUser();
 
     if (!content || !senderId || !conversationId) {
       return NextResponse.json(
         { error: "Missing fields" },
         { status: 400 }
+      );
+    }
+
+    if (!sessionUser || sessionUser.userId !== senderId) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
       );
     }
 
@@ -139,7 +156,8 @@ export async function POST(req: Request) {
     // Only create the message if they are still friends
     const message = await prisma.message.create({
       data: {
-        content,
+        content: String(content),
+        encrypted: true,
         senderId,
         conversationId,
       },
