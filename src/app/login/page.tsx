@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+const KEY_STORAGE_KEY = "cryptochat_key_material_v1";
+
 export default function LoginPage() {
   const router = useRouter();
 
@@ -36,8 +38,17 @@ export default function LoginPage() {
         return;
       }
 
-      // Temporary authentication storage
-      // We will replace this with sessions later
+      const currentKeyMaterial = sessionStorage.getItem(KEY_STORAGE_KEY);
+      if (!currentKeyMaterial && data.publicKey) {
+        sessionStorage.setItem(
+          KEY_STORAGE_KEY,
+          JSON.stringify({
+            publicKey: data.publicKey,
+            privateKey: "",
+          })
+        );
+      }
+
       localStorage.setItem(
         "loggedInUser",
         JSON.stringify({
@@ -47,7 +58,6 @@ export default function LoginPage() {
       );
 
       router.push("/chat");
-
     } catch (error) {
       console.error(error);
       setError("Something went wrong");

@@ -1,16 +1,24 @@
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-
+    const sessionUser = await getSessionUser();
     const userId = searchParams.get("userId");
 
     if (!userId) {
       return NextResponse.json(
         { error: "Missing userId" },
         { status: 400 }
+      );
+    }
+
+    if (!sessionUser || sessionUser.userId !== userId) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
       );
     }
 
@@ -63,11 +71,15 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
 
   try {
+    const sessionUser = await getSessionUser();
+    const { userId } = await req.json();
 
-    const {
-      userId
-    } = await req.json();
-
+    if (!sessionUser || sessionUser.userId !== userId) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
 
     const conversation = await prisma.conversation.create({
 

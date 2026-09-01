@@ -2,11 +2,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { generateUserKeyPair } from "@/lib/crypto";
+
+const KEY_STORAGE_KEY = "cryptochat_key_material_v1";
 
 export default function SignupPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
-  const [email, setEmail] = useState(""); 
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
@@ -14,6 +17,7 @@ export default function SignupPage() {
     setError("");
 
     try {
+      const keyPair = await generateUserKeyPair();
       const response = await fetch("/api/signup", {
         method: "POST",
         headers: {
@@ -23,6 +27,7 @@ export default function SignupPage() {
           username,
           email,
           password,
+          publicKey: keyPair.publicKey,
         }),
       });
 
@@ -33,6 +38,14 @@ export default function SignupPage() {
         return;
       }
 
+      sessionStorage.setItem(
+        KEY_STORAGE_KEY,
+        JSON.stringify({
+          publicKey: keyPair.publicKey,
+          privateKey: keyPair.privateKey,
+        })
+      );
+
       localStorage.setItem(
         "loggedInUser",
         JSON.stringify({
@@ -42,7 +55,6 @@ export default function SignupPage() {
       );
 
       router.push("/chat");
-
     } catch (error) {
       console.error(error);
       setError("Something went wrong");
