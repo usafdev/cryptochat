@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { generateUserKeyPair } from "@/lib/crypto";
+import { encryptPrivateKeyForStorage, generateUserKeyPair } from "@/lib/crypto";
 
 const KEY_STORAGE_KEY = "cryptochat_key_material_v1";
 
@@ -18,6 +18,10 @@ export default function SignupPage() {
 
     try {
       const keyPair = await generateUserKeyPair();
+      const encryptedPrivateKey = await encryptPrivateKeyForStorage(
+        keyPair.privateKey,
+        password
+      );
       const response = await fetch("/api/signup", {
         method: "POST",
         headers: {
@@ -28,6 +32,7 @@ export default function SignupPage() {
           email,
           password,
           publicKey: keyPair.publicKey,
+          encryptedPrivateKey: JSON.stringify(encryptedPrivateKey),
         }),
       });
 

@@ -5,9 +5,9 @@ import bcrypt from "bcrypt";
 
 export async function POST(req: Request) {
   try {
-    const { username, email, password, publicKey } = await req.json();
+    const { username, email, password, publicKey, encryptedPrivateKey } = await req.json();
 
-    if (!username || !email || !password || !publicKey) {
+    if (!username || !email || !password || !publicKey || !encryptedPrivateKey) {
       return NextResponse.json(
         { error: "Missing fields" },
         { status: 400 }
@@ -17,6 +17,12 @@ export async function POST(req: Request) {
     const normalizedUsername = String(username).trim();
     const normalizedEmail = String(email).trim().toLowerCase();
     const passwordString = String(password);
+    if (typeof encryptedPrivateKey !== "string" || encryptedPrivateKey.length > 20_000) {
+      return NextResponse.json(
+        { error: "Invalid encrypted private key" },
+        { status: 400 }
+      );
+    }
 
     if (normalizedUsername.length < 3 || normalizedUsername.length > 24) {
       return NextResponse.json(
@@ -60,6 +66,7 @@ export async function POST(req: Request) {
         email: normalizedEmail,
         passwordHash,
         publicKey,
+        encryptedPrivateKey,
       },
     });
 
