@@ -83,6 +83,30 @@ export async function POST(req: Request) {
       );
     }
 
+    if (typeof content !== "string" || content.length > 100_000) {
+      return NextResponse.json(
+        { error: "Message payload is invalid or too large" },
+        { status: 400 }
+      );
+    }
+
+    try {
+      const payload = JSON.parse(content);
+      if (
+        payload?.version !== "v1" ||
+        typeof payload.ciphertext !== "string" ||
+        typeof payload.iv !== "string" ||
+        typeof payload.encryptedKey !== "string"
+      ) {
+        throw new Error("Invalid encrypted payload");
+      }
+    } catch {
+      return NextResponse.json(
+        { error: "Message must contain a valid encrypted payload" },
+        { status: 400 }
+      );
+    }
+
     if (!sessionUser || sessionUser.userId !== senderId) {
       return NextResponse.json(
         { error: "Unauthorized" },

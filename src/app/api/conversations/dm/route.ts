@@ -21,6 +21,24 @@ export async function POST(req: Request) {
       );
     }
 
+    const friendship = await prisma.friendRequest.findFirst({
+      where: {
+        status: "accepted",
+        OR: [
+          { senderId: userId1, receiverId: userId2 },
+          { senderId: userId2, receiverId: userId1 },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (!friendship) {
+      return NextResponse.json(
+        { error: "You can only create conversations with friends." },
+        { status: 403 }
+      );
+    }
+
 
     // Check if DM already exists
     const existingConversation = await prisma.conversation.findFirst({

@@ -1,16 +1,22 @@
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { userId, friendId } = body;
+    const sessionUser = await getSessionUser();
 
     if (!userId || !friendId) {
       return NextResponse.json(
         { error: "Missing userId or friendId" },
         { status: 400 }
       );
+    }
+
+    if (!sessionUser || sessionUser.userId !== userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     if (userId === friendId) {
