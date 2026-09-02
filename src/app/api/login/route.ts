@@ -49,6 +49,7 @@ export async function POST(req: Request) {
       username: user.username,
       email: user.email,
       publicKey: user.publicKey ?? null,
+      encryptedPrivateKey: user.encryptedPrivateKey ?? null,
     });
 
     response.cookies.set(createSessionCookie(user.id, user.username));

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { decryptPrivateKeyFromStorage } from "@/lib/crypto";
 
 const KEY_STORAGE_KEY = "cryptochat_key_material_v1";
 
@@ -38,13 +39,16 @@ export default function LoginPage() {
         return;
       }
 
-      const currentKeyMaterial = sessionStorage.getItem(KEY_STORAGE_KEY);
-      if (!currentKeyMaterial && data.publicKey) {
+      if (data.encryptedPrivateKey) {
+        const privateKey = await decryptPrivateKeyFromStorage(
+          JSON.parse(data.encryptedPrivateKey),
+          password
+        );
         sessionStorage.setItem(
           KEY_STORAGE_KEY,
           JSON.stringify({
             publicKey: data.publicKey,
-            privateKey: "",
+            privateKey,
           })
         );
       }
