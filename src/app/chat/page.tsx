@@ -1,6 +1,8 @@
 "use client";
 
 import { sendMessage } from "@/lib/api";
+import { decryptMessagePayload } from "@/lib/crypto";
+import { getSocket, joinConversationRoom, relayLiveMessage } from "@/lib/socket";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import type { KeyboardEvent } from "react";
@@ -39,13 +41,14 @@ interface Chat {
 
 interface Conversation {
   id: string;
-  participants: { id: string; username: string }[];
+  participants: { id: string; username: string; publicKey?: string }[];
   messages: { content: string; createdAt: string }[];
 }
 
 type ChatMessages = Record<string, Message[]>;
 
 const STORAGE_KEY = "cryptochat_state_v1";
+const KEY_STORAGE_KEY = "cryptochat_key_material_v1";
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 const now = new Date();
@@ -80,6 +83,17 @@ function ChatShell() {
   const messageInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
+  const getStoredPrivateKey = useCallback(() => {
+    if (typeof window === "undefined") return null;
+
+    try {
+      const keyMaterial = JSON.parse(sessionStorage.getItem(KEY_STORAGE_KEY) || "null");
+      return typeof keyMaterial?.privateKey === "string" ? keyMaterial.privateKey : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // Initialize user data from localStorage
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -97,9 +111,11 @@ function ChatShell() {
     }
   }, [router]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await fetch("/api/logout", { method: "POST" });
     if (typeof window !== "undefined") {
       localStorage.removeItem("loggedInUser");
+      sessionStorage.removeItem(KEY_STORAGE_KEY);
       localStorage.removeItem(STORAGE_KEY); // SECURITY: Clear chat state on logout
     }
     router.push("/");
@@ -185,6 +201,62 @@ function ChatShell() {
     }
   }, [userId, loadFriendsAndConversations]);
 
+  useEffect(() => {
+    if (!userId) return;
+
+    const socket = getSocket();
+    if (!socket.connected) {
+      socket.connect();
+    }
+
+    const handleIncomingMessage = async (payload: {
+      conversationId: string;
+      senderId: string;
+      messageId: string;
+      senderUsername: string;
+      content: string;
+      createdAt: string;
+    }) => {
+      if (payload.senderId === userId) return;
+
+      const privateKey = getStoredPrivateKey();
+      let content = payload.content;
+
+      if (privateKey && content) {
+        const decrypted = await decryptMessagePayload(content, privateKey);
+        if (decrypted) {
+          content = decrypted;
+        }
+      }
+
+      setChatMessages((prev) => ({
+        ...prev,
+        [payload.conversationId]: [
+          ...(prev[payload.conversationId] ?? []),
+          {
+            id: payload.messageId,
+            content,
+            sender: payload.senderUsername,
+            timestamp: new Date(payload.createdAt),
+            isOwn: false,
+          },
+        ],
+      }));
+    };
+
+    socket.on("message:received", handleIncomingMessage);
+
+    return () => {
+      socket.off("message:received", handleIncomingMessage);
+    };
+  }, [userId, getStoredPrivateKey]);
+
+  useEffect(() => {
+    if (!userId || !selectedChat || selectedChat === "team") return;
+
+    joinConversationRoom(selectedChat, userId);
+  }, [selectedChat, userId]);
+
   // Fetch messages from DB whenever a chat is selected and userId is ready
   useEffect(() => {
     if (!selectedChat || selectedChat === "team" || !userId) return;
@@ -196,20 +268,33 @@ function ChatShell() {
         
         if (res.ok) {
           const msgs = await res.json();
-          const formattedMsgs: Message[] = msgs.map((m: { 
-            id: string; 
-            content: string; 
-            sender?: { username?: string }; 
-            createdAt: string; 
-            senderId: string; 
-          }) => ({
-            id: m.id,
-            content: m.content,
-            sender: m.sender?.username || "Unknown",
-            timestamp: new Date(m.createdAt),
-            isOwn: m.senderId === userId,
+          const privateKey = getStoredPrivateKey();
+
+          const formattedMsgs: Message[] = await Promise.all(msgs.map(async (m: {
+            id: string;
+            content: string;
+            sender?: { username?: string };
+            createdAt: string;
+            senderId: string;
+          }) => {
+            let content = m.content;
+
+            if (privateKey && content) {
+              const decrypted = await decryptMessagePayload(content, privateKey);
+              if (decrypted) {
+                content = decrypted;
+              }
+            }
+
+            return {
+              id: m.id,
+              content,
+              sender: m.sender?.username || "Unknown",
+              timestamp: new Date(m.createdAt),
+              isOwn: m.senderId === userId,
+            };
           }));
-          
+
           setChatMessages((prev) => ({
             ...prev,
             [selectedChat]: formattedMsgs,
@@ -224,7 +309,7 @@ function ChatShell() {
     };
 
     fetchMessages();
-  }, [selectedChat, userId]);
+  }, [selectedChat, userId, getStoredPrivateKey]);
 
   const chats = useMemo(() => {
     const team: Chat = {
@@ -239,11 +324,15 @@ function ChatShell() {
       const otherParticipant = conv.participants.find((p) => p.id !== userId);
       const friendName = otherParticipant?.username || "Unknown";
       const lastMsg = conv.messages[0]; 
+      let lastMessage = lastMsg?.content || "No messages yet";
+      if (lastMessage.startsWith('{"version":"v1"')) {
+        lastMessage = "Encrypted message";
+      }
       
       return {
         id: conv.id,
         name: friendName,
-        lastMessage: lastMsg?.content || "No messages yet",
+        lastMessage,
         timestamp: lastMsg ? new Date(lastMsg.createdAt) : new Date(0),
         unread: 0,
       };
@@ -338,11 +427,20 @@ function ChatShell() {
     }
 
     try {
-      const savedMessage = await sendMessage(selectedChat, trimmed, userId);
+      const selectedConversation = conversations.find((conversation) => conversation.id === selectedChat);
+      const recipient = selectedConversation?.participants.find((participant) => participant.id !== userId);
+      const recipientPublicKey = recipient?.publicKey;
+
+      if (!recipientPublicKey) {
+        alert("This chat is missing the recipient encryption key.");
+        return;
+      }
+
+      const savedMessage = await sendMessage(selectedChat, trimmed, userId, recipientPublicKey);
 
       const newMsg: Message = {
         id: savedMessage.id,
-        content: savedMessage.content,
+        content: trimmed,
         sender: loggedInUser,
         timestamp: new Date(savedMessage.createdAt),
         isOwn: true,
@@ -352,6 +450,15 @@ function ChatShell() {
         ...prev,
         [selectedChat]: [...(prev[selectedChat] ?? []), newMsg],
       }));
+
+      relayLiveMessage({
+        conversationId: selectedChat,
+        senderId: userId,
+        messageId: savedMessage.id,
+        senderUsername: loggedInUser,
+        content: savedMessage.content,
+        createdAt: savedMessage.createdAt,
+      });
 
       setMessage("");
       requestAnimationFrame(scrollToBottom);

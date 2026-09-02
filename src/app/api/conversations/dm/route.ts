@@ -1,14 +1,41 @@
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   try {
+    const sessionUser = await getSessionUser();
     const { userId1, userId2 } = await req.json();
 
     if (!userId1 || !userId2) {
       return NextResponse.json(
         { error: "Missing users" },
         { status: 400 }
+      );
+    }
+
+    if (!sessionUser || (sessionUser.userId !== userId1 && sessionUser.userId !== userId2)) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const friendship = await prisma.friendRequest.findFirst({
+      where: {
+        status: "accepted",
+        OR: [
+          { senderId: userId1, receiverId: userId2 },
+          { senderId: userId2, receiverId: userId1 },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (!friendship) {
+      return NextResponse.json(
+        { error: "You can only create conversations with friends." },
+        { status: 403 }
       );
     }
 
