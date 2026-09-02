@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -6,6 +7,7 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     const { requestId } = body;
+    const sessionUser = await getSessionUser();
 
     if (!requestId) {
       return NextResponse.json(
@@ -25,6 +27,10 @@ export async function POST(req: Request) {
         { error: "Friend request not found" },
         { status: 404 }
       );
+    }
+
+    if (!sessionUser || request.receiverId !== sessionUser.userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
     if (request.status !== "pending") {

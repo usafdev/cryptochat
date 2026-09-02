@@ -111,9 +111,11 @@ function ChatShell() {
     }
   }, [router]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await fetch("/api/logout", { method: "POST" });
     if (typeof window !== "undefined") {
       localStorage.removeItem("loggedInUser");
+      sessionStorage.removeItem(KEY_STORAGE_KEY);
       localStorage.removeItem(STORAGE_KEY); // SECURITY: Clear chat state on logout
     }
     router.push("/");
@@ -322,11 +324,15 @@ function ChatShell() {
       const otherParticipant = conv.participants.find((p) => p.id !== userId);
       const friendName = otherParticipant?.username || "Unknown";
       const lastMsg = conv.messages[0]; 
+      let lastMessage = lastMsg?.content || "No messages yet";
+      if (lastMessage.startsWith('{"version":"v1"')) {
+        lastMessage = "Encrypted message";
+      }
       
       return {
         id: conv.id,
         name: friendName,
-        lastMessage: lastMsg?.content || "No messages yet",
+        lastMessage,
         timestamp: lastMsg ? new Date(lastMsg.createdAt) : new Date(0),
         unread: 0,
       };

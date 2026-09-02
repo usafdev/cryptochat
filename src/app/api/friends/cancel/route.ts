@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
 
 export async function DELETE(req: Request) {
@@ -6,6 +7,7 @@ export async function DELETE(req: Request) {
     const body = await req.json();
 
     const { requestId, userId } = body;
+    const sessionUser = await getSessionUser();
 
     if (!requestId || !userId) {
       return NextResponse.json(
@@ -28,7 +30,7 @@ export async function DELETE(req: Request) {
     }
 
     // Only the sender can cancel their outgoing request
-    if (request.senderId !== userId) {
+    if (!sessionUser || sessionUser.userId !== userId || request.senderId !== sessionUser.userId) {
       return NextResponse.json(
         { error: "Not allowed" },
         { status: 403 }

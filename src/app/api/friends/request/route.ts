@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -6,12 +7,17 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     const { senderId, receiverId } = body;
+    const sessionUser = await getSessionUser();
 
     if (!senderId || !receiverId) {
       return NextResponse.json(
         { error: "Missing user IDs" },
         { status: 400 }
       );
+    }
+
+    if (!sessionUser || sessionUser.userId !== senderId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     if (senderId === receiverId) {
@@ -88,4 +94,3 @@ export async function POST(req: Request) {
     );
   }
 }
-

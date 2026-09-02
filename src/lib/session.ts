@@ -3,9 +3,12 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 export const SESSION_COOKIE_NAME = "cryptochat_session";
-const SESSION_SECRET = process.env.SESSION_SECRET ?? "dev-only-session-secret-please-change";
-if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
-  console.warn("SESSION_SECRET is not configured; using a development fallback. Set it before production deployment.");
+const SESSION_SECRET = process.env.SESSION_SECRET;
+function getSessionSecret() {
+  if (process.env.NODE_ENV === "production" && !SESSION_SECRET) {
+    throw new Error("SESSION_SECRET must be configured in production");
+  }
+  return SESSION_SECRET ?? "dev-only-session-secret-please-change";
 }
 const SESSION_TTL_MS = 1000 * 60 * 60 * 8;
 
@@ -33,7 +36,7 @@ function fromBase64Url(value: string): Buffer {
 function signToken(payload: SessionUser): string {
   const header = toBase64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const body = toBase64Url(JSON.stringify(payload));
-  const signature = createHmac("sha256", SESSION_SECRET)
+  const signature = createHmac("sha256", getSessionSecret())
     .update(`${header}.${body}`)
     .digest("base64")
     .replace(/\+/g, "-")
@@ -75,7 +78,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   }
 
   const [header, payload, signature] = parts;
-  const expectedSignature = createHmac("sha256", SESSION_SECRET)
+  const expectedSignature = createHmac("sha256", getSessionSecret())
     .update(`${header}.${payload}`)
     .digest("base64")
     .replace(/\+/g, "-")
