@@ -94,6 +94,17 @@ function ChatShell() {
     }
   }, []);
 
+  const getStoredPublicKey = useCallback(() => {
+    if (typeof window === "undefined") return null;
+
+    try {
+      const keyMaterial = JSON.parse(sessionStorage.getItem(KEY_STORAGE_KEY) || "null");
+      return typeof keyMaterial?.publicKey === "string" ? keyMaterial.publicKey : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // Initialize user data from localStorage
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -226,6 +237,8 @@ function ChatShell() {
         const decrypted = await decryptMessagePayload(content, privateKey);
         if (decrypted) {
           content = decrypted;
+        } else if (content.startsWith('{"version":"v1"')) {
+          content = "[Unable to decrypt message]";
         }
       }
 
@@ -283,6 +296,8 @@ function ChatShell() {
               const decrypted = await decryptMessagePayload(content, privateKey);
               if (decrypted) {
                 content = decrypted;
+              } else if (content.startsWith('{"version":"v1"')) {
+                content = "[Unable to decrypt message]";
               }
             }
 
@@ -366,10 +381,12 @@ function ChatShell() {
       }
 
       const revivedChatMessages: ChatMessages = Object.fromEntries(
-        Object.entries(parsed.chatMessages ?? {}).map(([chatId, msgs]) => [
-          chatId,
-          msgs.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })),
-        ])
+        Object.entries(parsed.chatMessages ?? {})
+          .filter(([chatId]) => chatId === "team")
+          .map(([chatId, msgs]) => [
+            chatId,
+            msgs.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })),
+          ])
       );
       setChatMessages((prev) => ({ ...prev, ...revivedChatMessages }));
       setSelectedChat(parsed.selectedChat);
@@ -387,10 +404,12 @@ function ChatShell() {
         selectedChat,
         chats: chats.map((c) => ({ ...c, timestamp: c.timestamp.toISOString() })),
         chatMessages: Object.fromEntries(
-          Object.entries(chatMessages).map(([id, msgs]) => [
-            id,
-            msgs.map((m) => ({ ...m, timestamp: m.timestamp.toISOString() })),
-          ])
+          Object.entries(chatMessages)
+            .filter(([id]) => id === "team")
+            .map(([id, msgs]) => [
+              id,
+              msgs.map((m) => ({ ...m, timestamp: m.timestamp.toISOString() })),
+            ])
         ),
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -430,13 +449,20 @@ function ChatShell() {
       const selectedConversation = conversations.find((conversation) => conversation.id === selectedChat);
       const recipient = selectedConversation?.participants.find((participant) => participant.id !== userId);
       const recipientPublicKey = recipient?.publicKey;
+      const senderPublicKey = getStoredPublicKey();
 
       if (!recipientPublicKey) {
         alert("This chat is missing the recipient encryption key.");
         return;
       }
 
-      const savedMessage = await sendMessage(selectedChat, trimmed, userId, recipientPublicKey);
+      const savedMessage = await sendMessage(
+        selectedChat,
+        trimmed,
+        userId,
+        recipientPublicKey,
+        senderPublicKey ?? undefined
+      );
 
       const newMsg: Message = {
         id: savedMessage.id,
