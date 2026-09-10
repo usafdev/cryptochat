@@ -96,7 +96,8 @@ export async function POST(req: Request) {
         payload?.version !== "v1" ||
         typeof payload.ciphertext !== "string" ||
         typeof payload.iv !== "string" ||
-        typeof payload.encryptedKey !== "string"
+        (typeof payload.encryptedKey !== "string" &&
+          typeof payload.senderEncryptedKey !== "string")
       ) {
         throw new Error("Invalid encrypted payload");
       }

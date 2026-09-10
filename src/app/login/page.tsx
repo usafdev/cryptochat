@@ -39,18 +39,26 @@ export default function LoginPage() {
         return;
       }
 
-      if (data.encryptedPrivateKey) {
-        const privateKey = await decryptPrivateKeyFromStorage(
-          JSON.parse(data.encryptedPrivateKey),
-          password
-        );
-        sessionStorage.setItem(
-          KEY_STORAGE_KEY,
-          JSON.stringify({
-            publicKey: data.publicKey,
-            privateKey,
-          })
-        );
+      if (!data.encryptedPrivateKey) {
+        sessionStorage.removeItem(KEY_STORAGE_KEY);
+      } else {
+        try {
+          const privateKey = await decryptPrivateKeyFromStorage(
+            JSON.parse(data.encryptedPrivateKey),
+            password
+          );
+          sessionStorage.setItem(
+            KEY_STORAGE_KEY,
+            JSON.stringify({
+              publicKey: data.publicKey,
+              privateKey,
+            })
+          );
+        } catch {
+          sessionStorage.removeItem(KEY_STORAGE_KEY);
+          setError("Unable to unlock your encryption keys with that password");
+          return;
+        }
       }
 
       localStorage.setItem(
