@@ -14,7 +14,8 @@ export async function sendMessage(
   const encryptedPayload = await encryptMessagePayload(
     content,
     recipientPublicKey,
-    senderPublicKey
+    senderPublicKey,
+    `conversation:${conversationId}:sender:${senderId}`
   );
 
   const response = await fetch("/api/messages", {

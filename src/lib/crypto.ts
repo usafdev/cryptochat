@@ -1,9 +1,10 @@
 export type EncryptedMessagePayload = {
-  version: "v1";
+  version: "v1" | "v2";
   ciphertext: string;
   iv: string;
   encryptedKey: string;
   senderEncryptedKey?: string;
+  associatedData?: string;
 };
 
 export type EncryptedPrivateKey = {
@@ -143,7 +144,8 @@ export async function decryptPrivateKeyFromStorage(
 export async function encryptMessagePayload(
   plaintext: string,
   recipientPublicKey: string,
-  senderPublicKey?: string
+  senderPublicKey?: string,
+  associatedData = ""
 ): Promise<EncryptedMessagePayload> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const symmetricKey = crypto.getRandomValues(new Uint8Array(32));
@@ -157,7 +159,7 @@ export async function encryptMessagePayload(
   );
 
   const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv, additionalData: textEncoder.encode(associatedData) },
     aesKey,
     textEncoder.encode(plaintext)
   );
@@ -171,10 +173,11 @@ export async function encryptMessagePayload(
   );
 
   const payload: EncryptedMessagePayload = {
-    version: "v1",
+    version: "v2",
     ciphertext: toBase64Url(ciphertext),
     iv: toBase64Url(iv),
     encryptedKey: toBase64Url(encryptedKey),
+    associatedData,
   };
 
   if (senderPublicKey) {
@@ -193,7 +196,8 @@ export async function encryptMessagePayload(
 
 export async function decryptMessagePayload(
   serializedPayload: string,
-  privateKeyBase64: string
+  privateKeyBase64: string,
+  expectedAssociatedData?: string
 ): Promise<string | null> {
   if (!serializedPayload || !privateKeyBase64) {
     return null;
@@ -205,7 +209,17 @@ export async function decryptMessagePayload(
     if (
       !parsed?.ciphertext ||
       !parsed?.iv ||
+      parsed.version !== "v1" &&
+        parsed.version !== "v2" ||
+      (parsed.version === "v2" && typeof parsed.associatedData !== "string") ||
       (!parsed.encryptedKey && !parsed.senderEncryptedKey)
+    ) {
+      return null;
+    }
+    if (
+      expectedAssociatedData !== undefined &&
+      (parsed.version !== "v2" ||
+        parsed.associatedData !== expectedAssociatedData)
     ) {
       return null;
     }
@@ -237,8 +251,15 @@ export async function decryptMessagePayload(
       return null;
     }
 
+    const decryptParameters: AesGcmParams = {
+      name: "AES-GCM",
+      iv: fromBase64Url(parsed.iv),
+    };
+    if (parsed.version === "v2") {
+      decryptParameters.additionalData = textEncoder.encode(parsed.associatedData);
+    }
     const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: fromBase64Url(parsed.iv) },
+      decryptParameters,
       aesKey,
       fromBase64Url(parsed.ciphertext)
     );

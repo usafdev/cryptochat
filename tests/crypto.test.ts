@@ -29,12 +29,26 @@ test("round-trips an encrypted message for the recipient", async () => {
   const keyPair = await generateUserKeyPair();
   const payload = await encryptMessagePayload(
     "private message",
-    keyPair.publicKey
+    keyPair.publicKey,
+    undefined,
+    "conversation:conversation-1:sender:user-1"
   );
 
   assert.equal(
-    await decryptMessagePayload(JSON.stringify(payload), keyPair.privateKey),
+    await decryptMessagePayload(
+      JSON.stringify(payload),
+      keyPair.privateKey,
+      "conversation:conversation-1:sender:user-1"
+    ),
     "private message"
+  );
+  assert.equal(
+    await decryptMessagePayload(
+      JSON.stringify(payload),
+      keyPair.privateKey,
+      "conversation:conversation-2:sender:user-1"
+    ),
+    null
   );
   assert.equal(
     await decryptMessagePayload(JSON.stringify(payload), "invalid-key"),
@@ -48,15 +62,24 @@ test("round-trips an encrypted message for both participants", async () => {
   const payload = await encryptMessagePayload(
     "message for both participants",
     recipient.publicKey,
-    sender.publicKey
+    sender.publicKey,
+    "conversation:conversation-1:sender:user-1"
   );
 
   assert.equal(
-    await decryptMessagePayload(JSON.stringify(payload), recipient.privateKey),
+    await decryptMessagePayload(
+      JSON.stringify(payload),
+      recipient.privateKey,
+      "conversation:conversation-1:sender:user-1"
+    ),
     "message for both participants"
   );
   assert.equal(
-    await decryptMessagePayload(JSON.stringify(payload), sender.privateKey),
+    await decryptMessagePayload(
+      JSON.stringify(payload),
+      sender.privateKey,
+      "conversation:conversation-1:sender:user-1"
+    ),
     "message for both participants"
   );
 });
