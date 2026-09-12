@@ -2,8 +2,19 @@ import { prisma } from "@/lib/prisma";
 import { createSessionCookie } from "@/lib/session";
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { isValidEncryptedPrivateKey, isValidPublicKey } from "@/lib/validation";
 
 export async function POST(req: Request) {
+  const rateLimitResponse = enforceRateLimit(req, {
+    name: "signup",
+    limit: 5,
+    windowMs: 60 * 60 * 1000,
+  });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   try {
     const { username, email, password, publicKey, encryptedPrivateKey } = await req.json();
 
@@ -17,9 +28,9 @@ export async function POST(req: Request) {
     const normalizedUsername = String(username).trim();
     const normalizedEmail = String(email).trim().toLowerCase();
     const passwordString = String(password);
-    if (typeof encryptedPrivateKey !== "string" || encryptedPrivateKey.length > 20_000) {
+    if (!isValidPublicKey(publicKey) || !isValidEncryptedPrivateKey(encryptedPrivateKey)) {
       return NextResponse.json(
-        { error: "Invalid encrypted private key" },
+        { error: "Invalid encryption keys" },
         { status: 400 }
       );
     }
@@ -65,8 +76,8 @@ export async function POST(req: Request) {
         username: normalizedUsername,
         email: normalizedEmail,
         passwordHash,
-        publicKey,
-        encryptedPrivateKey,
+        publicKey: String(publicKey),
+        encryptedPrivateKey: String(encryptedPrivateKey),
       },
     });
 

@@ -7,6 +7,12 @@ import {
   encryptPrivateKeyForStorage,
   generateUserKeyPair,
 } from "../src/lib/crypto";
+import {
+  isValidEncryptedMessagePayload,
+  isValidEncryptedPrivateKey,
+  isValidPublicKey,
+} from "../src/lib/validation";
+import { enforceRateLimit, resetRateLimitsForTests } from "../src/lib/rate-limit";
 
 test("encrypts and decrypts a private key with the account password", async () => {
   const keyPair = await generateUserKeyPair();
@@ -94,4 +100,60 @@ test("rejects malformed encrypted message payloads", async () => {
     ),
     null
   );
+});
+
+test("validates stored keys and encrypted message shape", async () => {
+  const recipient = await generateUserKeyPair();
+  const storedPrivateKey = await encryptPrivateKeyForStorage(
+    recipient.privateKey,
+    "correct horse battery staple"
+  );
+  const serializedPrivateKey = JSON.stringify(storedPrivateKey);
+  const payload = await encryptMessagePayload(
+    "validated message",
+    recipient.publicKey,
+    undefined,
+    "conversation:conversation-1:sender:user-1"
+  );
+
+  assert.equal(isValidPublicKey(recipient.publicKey), true);
+  assert.equal(isValidEncryptedPrivateKey(serializedPrivateKey), true);
+  assert.equal(
+    isValidEncryptedMessagePayload(
+      JSON.stringify(payload),
+      "conversation:conversation-1:sender:user-1"
+    ),
+    true
+  );
+  assert.equal(isValidPublicKey("not-a-public-key"), false);
+  assert.equal(
+    isValidEncryptedPrivateKey(JSON.stringify({ ...storedPrivateKey, extra: "field" })),
+    false
+  );
+  assert.equal(
+    isValidEncryptedMessagePayload(
+      JSON.stringify({ ...payload, unexpected: "field" }),
+      "conversation:conversation-1:sender:user-1"
+    ),
+    false
+  );
+});
+
+test("rate limits requests in a single process", () => {
+  resetRateLimitsForTests();
+  const request = new Request("http://localhost/api/login", {
+    headers: { "x-real-ip": "198.51.100.10" },
+  });
+
+  assert.equal(
+    enforceRateLimit(request, { name: "test", limit: 1, windowMs: 60_000 }),
+    null
+  );
+  const limited = enforceRateLimit(request, {
+    name: "test",
+    limit: 1,
+    windowMs: 60_000,
+  });
+  assert.equal(limited?.status, 429);
+  assert.equal(limited?.headers.get("retry-after"), "60");
 });
