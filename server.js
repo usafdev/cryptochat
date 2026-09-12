@@ -8,13 +8,53 @@ const { PrismaClient } = require("@prisma/client");
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
 const port = Number(process.env.PORT || 3000);
-const sessionSecret = process.env.SESSION_SECRET || "dev-only-session-secret-please-change";
+const developmentSessionSecret = "dev-only-session-secret-please-change";
+const sessionSecret = dev
+  ? process.env.SESSION_SECRET || developmentSessionSecret
+  : process.env.SESSION_SECRET;
 const sessionCookieName = "cryptochat_session";
 const prisma = new PrismaClient();
+let server;
+let io;
+let shuttingDown = false;
 
-if (!dev && !process.env.SESSION_SECRET) {
-  throw new Error("SESSION_SECRET must be configured in production");
+function getAppOrigin() {
+  const configuredOrigin = process.env.APP_ORIGIN;
+  if (!dev && !configuredOrigin) {
+    throw new Error("APP_ORIGIN must be configured in production");
+  }
+
+  const origin = configuredOrigin || "http://localhost:3000";
+  let parsedOrigin;
+  try {
+    parsedOrigin = new URL(origin);
+  } catch {
+    throw new Error("APP_ORIGIN must be a valid HTTP(S) URL");
+  }
+
+  if (
+    !["http:", "https:"].includes(parsedOrigin.protocol) ||
+    parsedOrigin.username ||
+    parsedOrigin.password ||
+    parsedOrigin.pathname !== "/" ||
+    parsedOrigin.search ||
+    parsedOrigin.hash
+  ) {
+    throw new Error("APP_ORIGIN must be a valid HTTP(S) origin without a path or credentials");
+  }
+
+  return parsedOrigin.origin;
 }
+
+if (!dev) {
+  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
+    throw new Error("SESSION_SECRET must be configured with at least 32 characters in production");
+  }
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL must be configured in production");
+  }
+}
+const appOrigin = getAppOrigin();
 
 function getSessionUser(cookieHeader) {
   const token = cookieHeader
@@ -56,14 +96,14 @@ const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
-  const server = createServer((req, res) => {
+  server = createServer((req, res) => {
     const parsedUrl = parse(req.url, true);
     handle(req, res, parsedUrl);
   });
 
-  const io = new Server(server, {
+  io = new Server(server, {
     cors: {
-      origin: process.env.APP_ORIGIN || "http://localhost:3000",
+      origin: appOrigin,
       methods: ["GET", "POST"],
       credentials: true,
     },
@@ -136,4 +176,33 @@ app.prepare().then(() => {
   server.listen(port, hostname, () => {
     console.log(`> CryptoChat ready on http://${hostname}:${port}`);
   });
+}).catch(async (error) => {
+  console.error("Failed to start CryptoChat", error);
+  await prisma.$disconnect();
+  process.exitCode = 1;
+});
+
+async function shutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  console.log(`> ${signal} received, shutting down CryptoChat`);
+
+  io?.close();
+  await new Promise((resolve) => {
+    if (!server?.listening) {
+      resolve();
+      return;
+    }
+    server.close(resolve);
+  });
+  await prisma.$disconnect();
+}
+
+process.once("SIGINT", () => {
+  shutdown("SIGINT").then(() => process.exit(0));
+});
+process.once("SIGTERM", () => {
+  shutdown("SIGTERM").then(() => process.exit(0));
 });

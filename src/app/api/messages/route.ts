@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { isValidEncryptedMessagePayload } from "@/lib/validation";
 
 // GET messages for a conversation
 export async function GET(req: Request) {
@@ -83,26 +85,12 @@ export async function POST(req: Request) {
       );
     }
 
-    if (typeof content !== "string" || content.length > 100_000) {
-      return NextResponse.json(
-        { error: "Message payload is invalid or too large" },
-        { status: 400 }
-      );
-    }
-
-    try {
-      const payload = JSON.parse(content);
-      if (
-        payload?.version !== "v2" ||
-        typeof payload.ciphertext !== "string" ||
-        typeof payload.iv !== "string" ||
-        payload.associatedData !== `conversation:${conversationId}:sender:${senderId}` ||
-        (typeof payload.encryptedKey !== "string" &&
-          typeof payload.senderEncryptedKey !== "string")
-      ) {
-        throw new Error("Invalid encrypted payload");
-      }
-    } catch {
+    if (
+      !isValidEncryptedMessagePayload(
+        content,
+        `conversation:${conversationId}:sender:${senderId}`
+      )
+    ) {
       return NextResponse.json(
         { error: "Message must contain a valid encrypted payload" },
         { status: 400 }
@@ -114,6 +102,16 @@ export async function POST(req: Request) {
         { error: "Unauthorized" },
         { status: 401 }
       );
+    }
+
+    const rateLimitResponse = enforceRateLimit(req, {
+      name: "message-create",
+      limit: 60,
+      windowMs: 60 * 1000,
+      key: sessionUser.userId,
+    });
+    if (rateLimitResponse) {
+      return rateLimitResponse;
     }
 
     // SECURITY: Verify sender is actually in the conversation

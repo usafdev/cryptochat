@@ -1,15 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { getSessionSecret } from "@/lib/env";
 
 export const SESSION_COOKIE_NAME = "cryptochat_session";
-const SESSION_SECRET = process.env.SESSION_SECRET;
-function getSessionSecret() {
-  if (process.env.NODE_ENV === "production" && !SESSION_SECRET) {
-    throw new Error("SESSION_SECRET must be configured in production");
-  }
-  return SESSION_SECRET ?? "dev-only-session-secret-please-change";
-}
 const SESSION_TTL_MS = 1000 * 60 * 60 * 8;
 
 export type SessionUser = {
