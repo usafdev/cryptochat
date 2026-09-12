@@ -2,6 +2,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getSessionSecret } from "@/lib/env";
+import { prisma } from "@/lib/prisma";
+import { randomUUID } from "node:crypto";
 
 export const SESSION_COOKIE_NAME = "cryptochat_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 8;
@@ -10,6 +12,7 @@ export type SessionUser = {
   userId: string;
   username: string;
   exp: number;
+  sessionId: string;
 };
 
 function toBase64Url(value: string | Uint8Array | Buffer): string {
@@ -40,11 +43,22 @@ function signToken(payload: SessionUser): string {
   return `${header}.${body}.${signature}`;
 }
 
-export function createSessionCookie(userId: string, username: string) {
+export async function createSessionCookie(userId: string, username: string) {
+  const sessionId = randomUUID();
+  const exp = Date.now() + SESSION_TTL_MS;
+  await prisma.session.create({
+    data: {
+      id: sessionId,
+      userId,
+      expiresAt: new Date(exp),
+    },
+  });
+
   const payload: SessionUser = {
     userId,
     username,
-    exp: Date.now() + SESSION_TTL_MS,
+    exp,
+    sessionId,
   };
 
   return {
@@ -89,14 +103,37 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   try {
     const decoded = JSON.parse(fromBase64Url(payload).toString("utf8")) as SessionUser;
 
-    if (!decoded.userId || !decoded.username || decoded.exp < Date.now()) {
+    if (
+      !decoded.userId ||
+      !decoded.username ||
+      !decoded.sessionId ||
+      decoded.exp < Date.now()
+    ) {
       return null;
     }
+
+    const session = await prisma.session.findFirst({
+      where: {
+        id: decoded.sessionId,
+        userId: decoded.userId,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (!session) return null;
 
     return decoded;
   } catch {
     return null;
   }
+}
+
+export async function revokeSession(sessionUser: SessionUser | null) {
+  if (!sessionUser) return;
+  await prisma.session.updateMany({
+    where: { id: sessionUser.sessionId, userId: sessionUser.userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
 }
 
 export function clearSessionCookie(response: NextResponse) {

@@ -88,7 +88,7 @@ export async function POST(req: Request) {
       publicKey: user.publicKey,
     });
 
-    response.cookies.set(createSessionCookie(user.id, user.username));
+    response.cookies.set(await createSessionCookie(user.id, user.username));
     return response;
   } catch (error) {
     console.error(error);

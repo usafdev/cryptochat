@@ -37,40 +37,59 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. Update request status
-    await prisma.friendRequest.update({
-      where: { id: requestId },
-      data: { status: "accepted" },
-    });
+    const directKey = [existingRequest.senderId, existingRequest.receiverId].sort().join(":");
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.friendRequest.updateMany({
+        where: { id: requestId, receiverId: sessionUser.userId, status: "pending" },
+        data: { status: "accepted" },
+      });
+      if (updated.count !== 1) {
+        throw new Error("REQUEST_ALREADY_HANDLED");
+      }
 
-    // 2. Ensure a conversation exists for these two users
-    const existingConversation = await prisma.conversation.findFirst({
-      where: {
-        isGroup: false,
-        AND: [
-          { participants: { some: { id: existingRequest.senderId } } },
-          { participants: { some: { id: existingRequest.receiverId } } },
-        ],
-      },
-    });
-
-    if (!existingConversation) {
-      await prisma.conversation.create({
-        data: {
+      const existingConversation = await tx.conversation.findFirst({
+        where: {
           isGroup: false,
-          participants: {
-            connect: [
-              { id: existingRequest.senderId },
-              { id: existingRequest.receiverId },
+          OR: [{ directKey }, {
+            AND: [
+              { participants: { some: { id: existingRequest.senderId } } },
+              { participants: { some: { id: existingRequest.receiverId } } },
             ],
-          },
+          }],
         },
       });
-    }
+      if (existingConversation) {
+        if (!existingConversation.directKey) {
+          await tx.conversation.update({
+            where: { id: existingConversation.id },
+            data: { directKey },
+          });
+        }
+      } else {
+        await tx.conversation.create({
+          data: {
+            directKey,
+            isGroup: false,
+            participants: {
+              connect: [
+                { id: existingRequest.senderId },
+                { id: existingRequest.receiverId },
+              ],
+            },
+          },
+        });
+      }
+    });
 
     return NextResponse.json({ success: true });
 
   } catch (error) {
+    if (error instanceof Error && error.message === "REQUEST_ALREADY_HANDLED") {
+      return NextResponse.json(
+        { error: "Request already handled" },
+        { status: 400 }
+      );
+    }
     console.error(error);
     return NextResponse.json(
       { error: "Server error" },

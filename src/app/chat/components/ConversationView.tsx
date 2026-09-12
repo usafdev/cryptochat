@@ -12,6 +12,8 @@ type Props = {
   messages: Message[];
   message: string;
   loadingMessages: boolean;
+  loadingOlderMessages: boolean;
+  hasOlderMessages: boolean;
   sending: boolean;
   showEmoji: boolean;
   messageInputRef: React.RefObject<HTMLInputElement | null>;
@@ -19,6 +21,7 @@ type Props = {
   onMessageChange: (value: string) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void;
   onSend: () => void;
+  onLoadOlder: () => void;
   onToggleEmoji: () => void;
   onAddEmoji: (emoji: string) => void;
   formatTime: (date: Date) => string;
@@ -30,6 +33,8 @@ export function ConversationView({
   messages,
   message,
   loadingMessages,
+  loadingOlderMessages,
+  hasOlderMessages,
   sending,
   showEmoji,
   messageInputRef,
@@ -37,6 +42,7 @@ export function ConversationView({
   onMessageChange,
   onKeyDown,
   onSend,
+  onLoadOlder,
   onToggleEmoji,
   onAddEmoji,
   formatTime,
@@ -70,6 +76,18 @@ export function ConversationView({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4" role="log" aria-live="polite" aria-relevant="additions text">
+        {hasOlderMessages && (
+          <div className="mb-4 text-center">
+            <button
+              type="button"
+              onClick={onLoadOlder}
+              disabled={loadingOlderMessages}
+              className="text-xs text-green-400 hover:underline disabled:opacity-50"
+            >
+              {loadingOlderMessages ? "Loading older messages..." : "Load older messages"}
+            </button>
+          </div>
+        )}
         {loadingMessages ? (
           <p className="mt-8 text-center text-sm text-gray-500">Loading messages...</p>
         ) : messages.length === 0 ? (
