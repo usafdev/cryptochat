@@ -56,7 +56,7 @@ if (!dev) {
 }
 const appOrigin = getAppOrigin();
 
-function getSessionUser(cookieHeader) {
+async function getSessionUser(cookieHeader) {
   const token = cookieHeader
     ?.split(";")
     .map((part) => part.trim())
@@ -86,7 +86,23 @@ function getSessionUser(cookieHeader) {
 
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return decoded.userId && decoded.exp >= Date.now() ? decoded : null;
+    if (
+      !decoded.userId ||
+      !decoded.sessionId ||
+      decoded.exp < Date.now()
+    ) {
+      return null;
+    }
+
+    const session = await prisma.session.findFirst({
+      where: {
+        id: decoded.sessionId,
+        userId: decoded.userId,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    return session ? decoded : null;
   } catch {
     return null;
   }
@@ -109,67 +125,103 @@ app.prepare().then(() => {
     },
   });
 
-  io.use((socket, next) => {
-    const user = getSessionUser(socket.handshake.headers.cookie);
-    if (!user) {
-      return next(new Error("Unauthorized"));
+  io.use(async (socket, next) => {
+    try {
+      const user = await getSessionUser(socket.handshake.headers.cookie);
+      if (!user) {
+        return next(new Error("Unauthorized"));
+      }
+      socket.data.userId = user.userId;
+      next();
+    } catch (error) {
+      console.error("Socket authentication error", error);
+      next(new Error("Unauthorized"));
     }
-    socket.data.userId = user.userId;
-    next();
   });
 
   io.on("connection", (socket) => {
-    socket.on("join:conversation", async ({ conversationId }, acknowledge) => {
-      if (!conversationId) {
-        acknowledge?.({ ok: false, error: "Conversation is required" });
-        return;
+    const eventWindows = new Map();
+    const isThrottled = (eventName, limit, windowMs) => {
+      const now = Date.now();
+      const current = eventWindows.get(eventName);
+      if (!current || current.resetAt <= now) {
+        eventWindows.set(eventName, { count: 1, resetAt: now + windowMs });
+        return false;
       }
+      current.count += 1;
+      return current.count > limit;
+    };
 
-      const conversation = await prisma.conversation.findFirst({
-        where: {
-          id: conversationId,
-          participants: { some: { id: socket.data.userId } },
-        },
-        select: { id: true },
-      });
-      if (conversation) {
-        socket.join(conversation.id);
-        acknowledge?.({ ok: true });
-      } else {
-        acknowledge?.({ ok: false, error: "Unauthorized" });
+    socket.on("join:conversation", async (payload, acknowledge) => {
+      try {
+        if (isThrottled("join:conversation", 30, 60_000)) {
+          acknowledge?.({ ok: false, error: "Too many requests" });
+          return;
+        }
+        const conversationId = payload?.conversationId;
+        if (!conversationId) {
+          acknowledge?.({ ok: false, error: "Conversation is required" });
+          return;
+        }
+
+        const conversation = await prisma.conversation.findFirst({
+          where: {
+            id: conversationId,
+            participants: { some: { id: socket.data.userId } },
+          },
+          select: { id: true },
+        });
+        if (conversation) {
+          socket.join(conversation.id);
+          acknowledge?.({ ok: true });
+        } else {
+          acknowledge?.({ ok: false, error: "Unauthorized" });
+        }
+      } catch (error) {
+        console.error("Socket join error", error);
+        acknowledge?.({ ok: false, error: "Unable to join conversation" });
       }
     });
 
     socket.on("message:received", async (payload, acknowledge) => {
-      if (!payload?.conversationId || !payload?.messageId) {
-        acknowledge?.({ ok: false, error: "Invalid message" });
-        return;
-      }
+      try {
+        if (isThrottled("message:received", 60, 60_000)) {
+          acknowledge?.({ ok: false, error: "Too many requests" });
+          return;
+        }
+        if (!payload?.conversationId || !payload?.messageId) {
+          acknowledge?.({ ok: false, error: "Invalid message" });
+          return;
+        }
 
-      const message = await prisma.message.findFirst({
-        where: {
-          id: payload.messageId,
-          conversationId: payload.conversationId,
-          senderId: socket.data.userId,
-        },
-        include: {
-          sender: { select: { username: true } },
-        },
-      });
-      if (!message) {
-        acknowledge?.({ ok: false, error: "Message not found" });
-        return;
-      }
+        const message = await prisma.message.findFirst({
+          where: {
+            id: payload.messageId,
+            conversationId: payload.conversationId,
+            senderId: socket.data.userId,
+          },
+          include: {
+            sender: { select: { username: true } },
+          },
+        });
+        if (!message) {
+          acknowledge?.({ ok: false, error: "Message not found" });
+          return;
+        }
 
-      socket.to(payload.conversationId).emit("message:received", {
-        conversationId: message.conversationId,
-        senderId: message.senderId,
-        messageId: message.id,
-        senderUsername: message.sender.username,
-        content: message.content,
-        createdAt: message.createdAt.toISOString(),
-      });
-      acknowledge?.({ ok: true });
+        socket.to(payload.conversationId).emit("message:received", {
+          conversationId: message.conversationId,
+          senderId: message.senderId,
+          messageId: message.id,
+          senderUsername: message.sender.username,
+          content: message.content,
+          createdAt: message.createdAt.toISOString(),
+        });
+        acknowledge?.({ ok: true });
+      } catch (error) {
+        console.error("Socket message relay error", error);
+        acknowledge?.({ ok: false, error: "Unable to relay message" });
+      }
     });
   });
 

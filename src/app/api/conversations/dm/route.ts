@@ -21,82 +21,73 @@ export async function POST(req: Request) {
       );
     }
 
-    const friendship = await prisma.friendRequest.findFirst({
-      where: {
-        status: "accepted",
-        OR: [
-          { senderId: userId1, receiverId: userId2 },
-          { senderId: userId2, receiverId: userId1 },
-        ],
-      },
-      select: { id: true },
-    });
-
-    if (!friendship) {
-      return NextResponse.json(
-        { error: "You can only create conversations with friends." },
-        { status: 403 }
-      );
-    }
-
-
-    // Check if DM already exists
-    const existingConversation = await prisma.conversation.findFirst({
-      where: {
-        isGroup: false,
-        AND: [
-          {
-            participants: {
-              some: {
-                id: userId1,
-              },
-            },
-          },
-          {
-            participants: {
-              some: {
-                id: userId2,
-              },
-            },
-          },
-        ],
-      },
-      include: {
-        participants: {
-          select: {
-            id: true,
-            username: true,
-            publicKey: true,
-          },
-        },
-      },
-    });
-
-
-    if (existingConversation) {
-      return NextResponse.json(existingConversation);
-    }
-
-
-    // Create new DM
-    const conversation = await prisma.conversation.create({
-      data: {
-        participants: {
-          connect: [
-            { id: userId1 },
-            { id: userId2 },
+    const directKey = [userId1, userId2].sort().join(":");
+    const conversation = await prisma.$transaction(async (tx) => {
+      const friendship = await tx.friendRequest.findFirst({
+        where: {
+          status: "accepted",
+          OR: [
+            { senderId: userId1, receiverId: userId2 },
+            { senderId: userId2, receiverId: userId1 },
           ],
         },
-      },
-      include: {
-        participants: {
-          select: {
-            id: true,
-            username: true,
-            publicKey: true,
+        select: { id: true },
+      });
+
+      if (!friendship) {
+        throw new Error("NOT_FRIENDS");
+      }
+
+      const existingConversation = await tx.conversation.findFirst({
+        where: {
+          isGroup: false,
+          OR: [{ directKey }, {
+            AND: [
+              { participants: { some: { id: userId1 } } },
+              { participants: { some: { id: userId2 } } },
+            ],
+          }],
+        },
+        include: {
+          participants: {
+            select: { id: true, username: true, publicKey: true },
           },
         },
-      },
+      });
+      if (existingConversation && !existingConversation.directKey) {
+        await tx.conversation.update({
+          where: { id: existingConversation.id },
+          data: { directKey },
+        });
+      }
+      if (existingConversation) return existingConversation;
+
+      return tx.conversation.create({
+        data: {
+          directKey,
+          participants: { connect: [{ id: userId1 }, { id: userId2 }] },
+        },
+        include: {
+          participants: {
+            select: { id: true, username: true, publicKey: true },
+          },
+        },
+      });
+    }).catch(async (error) => {
+      if (error instanceof Error && error.message === "NOT_FRIENDS") {
+        throw error;
+      }
+      if (error?.code === "P2002") {
+        return prisma.conversation.findUniqueOrThrow({
+          where: { directKey },
+          include: {
+            participants: {
+              select: { id: true, username: true, publicKey: true },
+            },
+          },
+        });
+      }
+      throw error;
     });
 
 
@@ -104,6 +95,12 @@ export async function POST(req: Request) {
 
 
   } catch(error) {
+    if (error instanceof Error && error.message === "NOT_FRIENDS") {
+      return NextResponse.json(
+        { error: "You can only create conversations with friends." },
+        { status: 403 }
+      );
+    }
 
     console.error(error);
 
