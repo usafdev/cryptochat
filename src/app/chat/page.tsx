@@ -3,49 +3,15 @@
 import { sendMessage } from "@/lib/api";
 import { decryptMessagePayload } from "@/lib/crypto";
 import { getSocket, joinConversationRoom, relayLiveMessage } from "@/lib/socket";
+import { ChatSidebar } from "./components/ChatSidebar";
+import { ConversationView } from "./components/ConversationView";
+import { Toast, type ToastMessage } from "./components/Toast";
+import type { Chat, ChatMessages, Conversation, Friend, FriendRequest, Message } from "./types";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import type { KeyboardEvent } from "react";
 import { Button } from "../components/ui/Button";
-import { Send, Lock, User, Settings, Search, Smile } from "lucide-react";
-
-interface Friend {
-  id: string;
-  username: string;
-}
-
-interface FriendRequest {
-  id: string;
-  status: string;
-  senderId: string;
-  receiverId: string;
-  sender?: { id: string; username: string };
-  receiver?: { id: string; username: string };
-}
-
-interface Message {
-  id: string;
-  content: string;
-  sender: string;
-  timestamp: Date;
-  isOwn: boolean;
-}
-
-interface Chat {
-  id: string;
-  name: string;
-  lastMessage: string;
-  timestamp: Date;
-  unread: number;
-}
-
-interface Conversation {
-  id: string;
-  participants: { id: string; username: string; publicKey?: string }[];
-  messages: { content: string; createdAt: string }[];
-}
-
-type ChatMessages = Record<string, Message[]>;
+import { Lock, Send, Settings, Search, Smile, User } from "lucide-react";
 
 const STORAGE_KEY = "cryptochat_state_v1";
 const KEY_STORAGE_KEY = "cryptochat_key_material_v1";
@@ -73,6 +39,10 @@ function ChatShell() {
   const [requests, setRequests] = useState<FriendRequest[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [showEmoji, setShowEmoji] = useState(false);
+  const [loadingData, setLoadingData] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
   
   const [userId, setUserId] = useState<string | null>(null);
   const [loggedInUser, setLoggedInUser] = useState<string>("You");
@@ -82,6 +52,10 @@ function ChatShell() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+
+  const notify = useCallback((message: ToastMessage) => {
+    setToast(message);
+  }, []);
 
   const getStoredPrivateKey = useCallback(() => {
     if (typeof window === "undefined") return null;
@@ -123,23 +97,38 @@ function ChatShell() {
   }, [router]);
 
   const handleLogout = async () => {
-    await fetch("/api/logout", { method: "POST" });
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("loggedInUser");
-      sessionStorage.removeItem(KEY_STORAGE_KEY);
-      localStorage.removeItem(STORAGE_KEY); // SECURITY: Clear chat state on logout
+    try {
+      const response = await fetch("/api/logout", { method: "POST" });
+      if (!response.ok) throw new Error("Logout failed");
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("loggedInUser");
+        sessionStorage.removeItem(KEY_STORAGE_KEY);
+        localStorage.removeItem(STORAGE_KEY);
+      }
+      router.push("/");
+    } catch (error) {
+      console.error(error);
+      notify({ kind: "error", text: "Unable to log out. Please try again." });
     }
-    router.push("/");
   };
 
-  async function sendFriendRequest(senderId: string, receiverId: string) {
+  async function sendFriendRequest(username: string) {
+    if (!userId) return;
+    const searchResponse = await fetch(`/api/users?username=${encodeURIComponent(username)}`);
+    const users = await searchResponse.json();
+    if (!searchResponse.ok) throw new Error(users.error || "Unable to find that user");
+    if (users.length === 0) throw new Error("User not found");
+    if (users[0].id === userId) throw new Error("You cannot send a request to yourself");
+
     const res = await fetch("/api/friends/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ senderId, receiverId }),
+      body: JSON.stringify({ senderId: userId, receiverId: users[0].id }),
     });
-    if (res.ok) loadFriendsAndConversations();
-    return res.json();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Unable to send friend request");
+    await loadFriendsAndConversations();
+    notify({ kind: "success", text: `Friend request sent to ${users[0].username}` });
   }
 
   async function acceptFriendRequest(requestId: string) {
@@ -148,8 +137,10 @@ function ChatShell() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ requestId }),
     });
-    if (res.ok) loadFriendsAndConversations();
-    return res.json();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Unable to accept request");
+    await loadFriendsAndConversations();
+    notify({ kind: "success", text: "Friend request accepted" });
   }
 
   async function declineFriendRequest(requestId: string) {
@@ -158,53 +149,62 @@ function ChatShell() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ requestId }),
     });
-    if (res.ok) loadFriendsAndConversations();
-    return res.json();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Unable to decline request");
+    await loadFriendsAndConversations();
+    notify({ kind: "success", text: "Friend request declined" });
   }
 
-  async function cancelFriendRequest(requestId: string, currentUserId: string) {
+  async function cancelFriendRequest(requestId: string) {
+    if (!userId) return;
     const res = await fetch("/api/friends/cancel", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requestId, userId: currentUserId }),
+      body: JSON.stringify({ requestId, userId }),
     });
-    if (res.ok) loadFriendsAndConversations();
-    return res.json();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Unable to cancel request");
+    await loadFriendsAndConversations();
+    notify({ kind: "success", text: "Friend request cancelled" });
   }
 
-  async function removeFriend(friendId: string) {
+  async function removeFriend(friendId: string, chatId: string) {
     if (!userId) return;
     const res = await fetch("/api/friends/remove", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userId, friendId }),
     });
-    if (res.ok) loadFriendsAndConversations();
-    return res.json();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Unable to remove friend");
+    if (selectedChat === chatId) setSelectedChat(null);
+    await loadFriendsAndConversations();
+    notify({ kind: "success", text: "Friend removed" });
   }
 
   const loadFriendsAndConversations = useCallback(async () => {
     if (!userId) return;
+    setLoadingData(true);
     try {
       const [friendsRes, convRes] = await Promise.all([
         fetch(`/api/friends?userId=${userId}`),
         fetch(`/api/conversations?userId=${userId}`)
       ]);
 
-      if (friendsRes.ok) {
-        const friendsData = await friendsRes.json();
-        setFriends(friendsData.friends ?? []);
-        setRequests(friendsData.requests ?? []);
-      }
-
-      if (convRes.ok) {
-        const convData = await convRes.json();
-        setConversations(convData);
-      }
+      const friendsData = await friendsRes.json();
+      const convData = await convRes.json();
+      if (!friendsRes.ok) throw new Error(friendsData.error || "Unable to load friends");
+      if (!convRes.ok) throw new Error(convData.error || "Unable to load conversations");
+      setFriends(friendsData.friends ?? []);
+      setRequests(friendsData.requests ?? []);
+      setConversations(convData);
     } catch (error) {
       console.error("loadFriendsAndConversations error:", error);
+      notify({ kind: "error", text: error instanceof Error ? error.message : "Unable to load chats" });
+    } finally {
+      setLoadingData(false);
     }
-  }, [userId]);
+  }, [notify, userId]);
 
   useEffect(() => {
     if (userId) {
@@ -234,18 +234,25 @@ function ChatShell() {
       let content = payload.content;
 
       if (privateKey && content) {
-        const decrypted = await decryptMessagePayload(content, privateKey);
+        const decrypted = await decryptMessagePayload(
+          content,
+          privateKey,
+          `conversation:${payload.conversationId}:sender:${payload.senderId}`
+        );
         if (decrypted) {
           content = decrypted;
-        } else if (content.startsWith('{"version":"v1"')) {
+        } else if (content.startsWith('{"version":"v2"')) {
           content = "[Unable to decrypt message]";
         }
       }
 
-      setChatMessages((prev) => ({
+      setChatMessages((prev) => {
+        const existing = prev[payload.conversationId] ?? [];
+        if (existing.some((item) => item.id === payload.messageId)) return prev;
+        return {
         ...prev,
         [payload.conversationId]: [
-          ...(prev[payload.conversationId] ?? []),
+          ...existing,
           {
             id: payload.messageId,
             content,
@@ -254,7 +261,8 @@ function ChatShell() {
             isOwn: false,
           },
         ],
-      }));
+        };
+      });
     };
 
     socket.on("message:received", handleIncomingMessage);
@@ -275,6 +283,7 @@ function ChatShell() {
     if (!selectedChat || selectedChat === "team" || !userId) return;
 
     const fetchMessages = async () => {
+      setLoadingMessages(true);
       try {
         // SECURITY: Pass userId to verify authorization on the backend
         const res = await fetch(`/api/messages?conversationId=${selectedChat}&userId=${userId}`);
@@ -293,10 +302,14 @@ function ChatShell() {
             let content = m.content;
 
             if (privateKey && content) {
-              const decrypted = await decryptMessagePayload(content, privateKey);
+              const decrypted = await decryptMessagePayload(
+                content,
+                privateKey,
+                `conversation:${selectedChat}:sender:${m.senderId}`
+              );
               if (decrypted) {
                 content = decrypted;
-              } else if (content.startsWith('{"version":"v1"')) {
+              } else if (content.startsWith('{"version":"v2"')) {
                 content = "[Unable to decrypt message]";
               }
             }
@@ -315,16 +328,22 @@ function ChatShell() {
             [selectedChat]: formattedMsgs,
           }));
         } else if (res.status === 403) {
-          // If unauthorized, clear the selected chat to prevent UI glitches
           setSelectedChat(null);
+          notify({ kind: "error", text: "You no longer have access to this conversation." });
+        } else {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || "Unable to load messages");
         }
       } catch (error) {
         console.error("Failed to fetch messages:", error);
+        notify({ kind: "error", text: error instanceof Error ? error.message : "Unable to load messages" });
+      } finally {
+        setLoadingMessages(false);
       }
     };
 
     fetchMessages();
-  }, [selectedChat, userId, getStoredPrivateKey]);
+  }, [getStoredPrivateKey, notify, selectedChat, userId]);
 
   const chats = useMemo(() => {
     const team: Chat = {
@@ -340,7 +359,7 @@ function ChatShell() {
       const friendName = otherParticipant?.username || "Unknown";
       const lastMsg = conv.messages[0]; 
       let lastMessage = lastMsg?.content || "No messages yet";
-      if (lastMessage.startsWith('{"version":"v1"')) {
+      if (lastMessage.startsWith('{"version":"v1"') || lastMessage.startsWith('{"version":"v2"')) {
         lastMessage = "Encrypted message";
       }
       
@@ -371,7 +390,6 @@ function ChatShell() {
       const parsed = JSON.parse(raw) as {
         userId: string;
         selectedChat: string | null;
-        chatMessages: Record<string, (Omit<Message, "timestamp"> & { timestamp: string })[]>;
       };
       
       // SECURITY CHECK: Only restore state if it belongs to the current user
@@ -380,15 +398,6 @@ function ChatShell() {
         return;
       }
 
-      const revivedChatMessages: ChatMessages = Object.fromEntries(
-        Object.entries(parsed.chatMessages ?? {})
-          .filter(([chatId]) => chatId === "team")
-          .map(([chatId, msgs]) => [
-            chatId,
-            msgs.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })),
-          ])
-      );
-      setChatMessages((prev) => ({ ...prev, ...revivedChatMessages }));
       setSelectedChat(parsed.selectedChat);
     } catch { 
       localStorage.removeItem(STORAGE_KEY); // Clear corrupted storage
@@ -403,14 +412,6 @@ function ChatShell() {
         userId, // Tie storage to the specific user
         selectedChat,
         chats: chats.map((c) => ({ ...c, timestamp: c.timestamp.toISOString() })),
-        chatMessages: Object.fromEntries(
-          Object.entries(chatMessages)
-            .filter(([id]) => id === "team")
-            .map(([id, msgs]) => [
-              id,
-              msgs.map((m) => ({ ...m, timestamp: m.timestamp.toISOString() })),
-            ])
-        ),
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch { /* ignore */ }
@@ -426,7 +427,7 @@ function ChatShell() {
 
   const handleSend = async () => {
     const trimmed = message.trim();
-    if (!trimmed || !selectedChat || !userId) return;
+    if (!trimmed || !selectedChat || !userId || sending) return;
 
     if (selectedChat === "team") {
       const newMsg: Message = {
@@ -445,6 +446,7 @@ function ChatShell() {
       return;
     }
 
+    setSending(true);
     try {
       const selectedConversation = conversations.find((conversation) => conversation.id === selectedChat);
       const recipient = selectedConversation?.participants.find((participant) => participant.id !== userId);
@@ -452,8 +454,7 @@ function ChatShell() {
       const senderPublicKey = getStoredPublicKey();
 
       if (!recipientPublicKey) {
-        alert("This chat is missing the recipient encryption key.");
-        return;
+        throw new Error("This chat is missing the recipient encryption key.");
       }
 
       const savedMessage = await sendMessage(
@@ -479,18 +480,18 @@ function ChatShell() {
 
       relayLiveMessage({
         conversationId: selectedChat,
-        senderId: userId,
         messageId: savedMessage.id,
-        senderUsername: loggedInUser,
-        content: savedMessage.content,
-        createdAt: savedMessage.createdAt,
+      }).catch((error) => {
+        console.error("Realtime delivery failed; message remains available in history:", error);
       });
 
       setMessage("");
       requestAnimationFrame(scrollToBottom);
     } catch (error) {
       console.error(error);
-      alert(error instanceof Error ? error.message : "Failed to send message");
+      notify({ kind: "error", text: error instanceof Error ? error.message : "Failed to send message" });
+    } finally {
+      setSending(false);
     }
   };
 
@@ -503,6 +504,64 @@ function ChatShell() {
 
   const formatTime = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+  const runAction = async (action: () => Promise<void>) => {
+    try {
+      await action();
+    } catch (error) {
+      console.error(error);
+      notify({ kind: "error", text: error instanceof Error ? error.message : "Something went wrong" });
+    }
+  };
+
+  return (
+    <div className="relative flex h-screen flex-col bg-black text-white md:flex-row">
+      <ChatSidebar
+        chats={chats}
+        friends={friends}
+        requests={requests}
+        selectedChat={selectedChat}
+        loggedInUser={loggedInUser}
+        userId={userId ?? ""}
+        search={search}
+        loading={loadingData}
+        onSearchChange={setSearch}
+        onSelectChat={setSelectedChat}
+        onSendFriendRequest={(username) => runAction(() => sendFriendRequest(username))}
+        onAcceptRequest={(requestId) => runAction(() => acceptFriendRequest(requestId))}
+        onDeclineRequest={(requestId) => runAction(() => declineFriendRequest(requestId))}
+        onCancelRequest={(requestId) => runAction(() => cancelFriendRequest(requestId))}
+        onRemoveFriend={(friendId, chatId) => runAction(() => removeFriend(friendId, chatId))}
+        onLogout={handleLogout}
+        formatTime={formatTime}
+      />
+      <ConversationView
+        selectedChat={selectedChat}
+        chats={chats}
+        messages={currentMessages}
+        message={message}
+        loadingMessages={loadingMessages}
+        sending={sending}
+        showEmoji={showEmoji}
+        messageInputRef={messageInputRef}
+        messagesEndRef={messagesEndRef}
+        onMessageChange={setMessage}
+        onKeyDown={handleKeyDown}
+        onSend={() => void handleSend()}
+        onToggleEmoji={() => setShowEmoji((visible) => !visible)}
+        onAddEmoji={(emoji) => {
+          setMessage((current) => current + emoji);
+          setShowEmoji(false);
+        }}
+        formatTime={formatTime}
+      />
+      <Toast message={toast} onDismiss={() => setToast(null)} />
+    </div>
+  );
+
+  /*
+   * Legacy inline layout retained below temporarily while the extracted layout
+   * is stabilized. It is unreachable and can be removed in the next cleanup.
+   */
   return (
     <div className="flex h-screen bg-black text-white">
       {/* Sidebar */}
@@ -550,7 +609,7 @@ function ChatShell() {
                   const users = await response.json();
                   if (users.length === 0) { alert("User not found."); return; }
 
-                  await sendFriendRequest(userId, users[0].id);
+                  await sendFriendRequest(users[0].username);
                   input.value = "";
                 }}
               />
@@ -567,7 +626,7 @@ function ChatShell() {
                   const users = await response.json();
                   if (users.length === 0) { alert("User not found."); return; }
 
-                  await sendFriendRequest(userId, users[0].id);
+                  await sendFriendRequest(users[0].username);
                   input.value = "";
                 }}
               >
@@ -629,7 +688,7 @@ function ChatShell() {
                       friend &&
                       window.confirm(`Remove ${chat.name} from friends?`)
                     ) {
-                      await removeFriend(friend.id);
+                      await removeFriend(friend.id, chat.id);
 
                       if (selectedChat === chat.id) {
                         setSelectedChat(null);
@@ -650,7 +709,7 @@ function ChatShell() {
             {requests.filter((r) => r.status === "pending" && r.senderId === userId).map((r) => (
               <div key={r.id} className="flex justify-between items-center text-xs hover:bg-gray-800 px-1 rounded">
                 <span>→ {r.receiver?.username || "Unknown"}</span>
-                <button className="text-red-400" onClick={() => userId && cancelFriendRequest(r.id, userId)}>✕</button>
+                <button className="text-red-400" onClick={() => userId && cancelFriendRequest(r.id)}>✕</button>
               </div>
             ))}
             {requests.filter((r) => r.status === "pending" && r.senderId === userId).length === 0 && (

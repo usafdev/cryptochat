@@ -93,9 +93,10 @@ export async function POST(req: Request) {
     try {
       const payload = JSON.parse(content);
       if (
-        payload?.version !== "v1" ||
+        payload?.version !== "v2" ||
         typeof payload.ciphertext !== "string" ||
         typeof payload.iv !== "string" ||
+        payload.associatedData !== `conversation:${conversationId}:sender:${senderId}` ||
         (typeof payload.encryptedKey !== "string" &&
           typeof payload.senderEncryptedKey !== "string")
       ) {

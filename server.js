@@ -79,8 +79,9 @@ app.prepare().then(() => {
   });
 
   io.on("connection", (socket) => {
-    socket.on("join:conversation", async ({ conversationId }) => {
+    socket.on("join:conversation", async ({ conversationId }, acknowledge) => {
       if (!conversationId) {
+        acknowledge?.({ ok: false, error: "Conversation is required" });
         return;
       }
 
@@ -91,25 +92,44 @@ app.prepare().then(() => {
         },
         select: { id: true },
       });
-      if (conversation) socket.join(conversation.id);
+      if (conversation) {
+        socket.join(conversation.id);
+        acknowledge?.({ ok: true });
+      } else {
+        acknowledge?.({ ok: false, error: "Unauthorized" });
+      }
     });
 
-    socket.on("message:received", async (payload) => {
-      if (!payload?.conversationId || !payload?.senderId || !payload?.messageId) {
+    socket.on("message:received", async (payload, acknowledge) => {
+      if (!payload?.conversationId || !payload?.messageId) {
+        acknowledge?.({ ok: false, error: "Invalid message" });
         return;
       }
 
-      if (payload.senderId !== socket.data.userId) return;
-      const conversation = await prisma.conversation.findFirst({
+      const message = await prisma.message.findFirst({
         where: {
-          id: payload.conversationId,
-          participants: { some: { id: socket.data.userId } },
+          id: payload.messageId,
+          conversationId: payload.conversationId,
+          senderId: socket.data.userId,
         },
-        select: { id: true },
+        include: {
+          sender: { select: { username: true } },
+        },
       });
-      if (!conversation) return;
+      if (!message) {
+        acknowledge?.({ ok: false, error: "Message not found" });
+        return;
+      }
 
-      socket.to(payload.conversationId).emit("message:received", payload);
+      socket.to(payload.conversationId).emit("message:received", {
+        conversationId: message.conversationId,
+        senderId: message.senderId,
+        messageId: message.id,
+        senderUsername: message.sender.username,
+        content: message.content,
+        createdAt: message.createdAt.toISOString(),
+      });
+      acknowledge?.({ ok: true });
     });
   });
 
