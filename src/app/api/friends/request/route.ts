@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
   try {
@@ -18,6 +19,16 @@ export async function POST(req: Request) {
 
     if (!sessionUser || sessionUser.userId !== senderId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const rateLimitResponse = enforceRateLimit(req, {
+      name: "friend-request",
+      limit: 20,
+      windowMs: 60 * 60 * 1000,
+      key: sessionUser.userId,
+    });
+    if (rateLimitResponse) {
+      return rateLimitResponse;
     }
 
     if (senderId === receiverId) {

@@ -4,13 +4,19 @@ export async function sendMessage(
   conversationId: string,
   content: string,
   senderId: string,
-  recipientPublicKey: string
+  recipientPublicKey: string,
+  senderPublicKey?: string
 ) {
   if (!recipientPublicKey) {
     throw new Error("Encryption key missing for this recipient");
   }
 
-  const encryptedPayload = await encryptMessagePayload(content, recipientPublicKey);
+  const encryptedPayload = await encryptMessagePayload(
+    content,
+    recipientPublicKey,
+    senderPublicKey,
+    `conversation:${conversationId}:sender:${senderId}`
+  );
 
   const response = await fetch("/api/messages", {
     method: "POST",

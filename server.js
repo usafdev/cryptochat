@@ -8,15 +8,55 @@ const { PrismaClient } = require("@prisma/client");
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
 const port = Number(process.env.PORT || 3000);
-const sessionSecret = process.env.SESSION_SECRET || "dev-only-session-secret-please-change";
+const developmentSessionSecret = "dev-only-session-secret-please-change";
+const sessionSecret = dev
+  ? process.env.SESSION_SECRET || developmentSessionSecret
+  : process.env.SESSION_SECRET;
 const sessionCookieName = "cryptochat_session";
 const prisma = new PrismaClient();
+let server;
+let io;
+let shuttingDown = false;
 
-if (!dev && !process.env.SESSION_SECRET) {
-  throw new Error("SESSION_SECRET must be configured in production");
+function getAppOrigin() {
+  const configuredOrigin = process.env.APP_ORIGIN;
+  if (!dev && !configuredOrigin) {
+    throw new Error("APP_ORIGIN must be configured in production");
+  }
+
+  const origin = configuredOrigin || "http://localhost:3000";
+  let parsedOrigin;
+  try {
+    parsedOrigin = new URL(origin);
+  } catch {
+    throw new Error("APP_ORIGIN must be a valid HTTP(S) URL");
+  }
+
+  if (
+    !["http:", "https:"].includes(parsedOrigin.protocol) ||
+    parsedOrigin.username ||
+    parsedOrigin.password ||
+    parsedOrigin.pathname !== "/" ||
+    parsedOrigin.search ||
+    parsedOrigin.hash
+  ) {
+    throw new Error("APP_ORIGIN must be a valid HTTP(S) origin without a path or credentials");
+  }
+
+  return parsedOrigin.origin;
 }
 
-function getSessionUser(cookieHeader) {
+if (!dev) {
+  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
+    throw new Error("SESSION_SECRET must be configured with at least 32 characters in production");
+  }
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL must be configured in production");
+  }
+}
+const appOrigin = getAppOrigin();
+
+async function getSessionUser(cookieHeader) {
   const token = cookieHeader
     ?.split(";")
     .map((part) => part.trim())
@@ -46,7 +86,23 @@ function getSessionUser(cookieHeader) {
 
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return decoded.userId && decoded.exp >= Date.now() ? decoded : null;
+    if (
+      !decoded.userId ||
+      !decoded.sessionId ||
+      decoded.exp < Date.now()
+    ) {
+      return null;
+    }
+
+    const session = await prisma.session.findFirst({
+      where: {
+        id: decoded.sessionId,
+        userId: decoded.userId,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    return session ? decoded : null;
   } catch {
     return null;
   }
@@ -56,64 +112,149 @@ const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
-  const server = createServer((req, res) => {
+  server = createServer((req, res) => {
     const parsedUrl = parse(req.url, true);
     handle(req, res, parsedUrl);
   });
 
-  const io = new Server(server, {
+  io = new Server(server, {
     cors: {
-      origin: process.env.APP_ORIGIN || "http://localhost:3000",
+      origin: appOrigin,
       methods: ["GET", "POST"],
       credentials: true,
     },
   });
 
-  io.use((socket, next) => {
-    const user = getSessionUser(socket.handshake.headers.cookie);
-    if (!user) {
-      return next(new Error("Unauthorized"));
+  io.use(async (socket, next) => {
+    try {
+      const user = await getSessionUser(socket.handshake.headers.cookie);
+      if (!user) {
+        return next(new Error("Unauthorized"));
+      }
+      socket.data.userId = user.userId;
+      next();
+    } catch (error) {
+      console.error("Socket authentication error", error);
+      next(new Error("Unauthorized"));
     }
-    socket.data.userId = user.userId;
-    next();
   });
 
   io.on("connection", (socket) => {
-    socket.on("join:conversation", async ({ conversationId }) => {
-      if (!conversationId) {
-        return;
+    const eventWindows = new Map();
+    const isThrottled = (eventName, limit, windowMs) => {
+      const now = Date.now();
+      const current = eventWindows.get(eventName);
+      if (!current || current.resetAt <= now) {
+        eventWindows.set(eventName, { count: 1, resetAt: now + windowMs });
+        return false;
       }
+      current.count += 1;
+      return current.count > limit;
+    };
 
-      const conversation = await prisma.conversation.findFirst({
-        where: {
-          id: conversationId,
-          participants: { some: { id: socket.data.userId } },
-        },
-        select: { id: true },
-      });
-      if (conversation) socket.join(conversation.id);
+    socket.on("join:conversation", async (payload, acknowledge) => {
+      try {
+        if (isThrottled("join:conversation", 30, 60_000)) {
+          acknowledge?.({ ok: false, error: "Too many requests" });
+          return;
+        }
+        const conversationId = payload?.conversationId;
+        if (!conversationId) {
+          acknowledge?.({ ok: false, error: "Conversation is required" });
+          return;
+        }
+
+        const conversation = await prisma.conversation.findFirst({
+          where: {
+            id: conversationId,
+            participants: { some: { id: socket.data.userId } },
+          },
+          select: { id: true },
+        });
+        if (conversation) {
+          socket.join(conversation.id);
+          acknowledge?.({ ok: true });
+        } else {
+          acknowledge?.({ ok: false, error: "Unauthorized" });
+        }
+      } catch (error) {
+        console.error("Socket join error", error);
+        acknowledge?.({ ok: false, error: "Unable to join conversation" });
+      }
     });
 
-    socket.on("message:received", async (payload) => {
-      if (!payload?.conversationId || !payload?.senderId || !payload?.messageId) {
-        return;
+    socket.on("message:received", async (payload, acknowledge) => {
+      try {
+        if (isThrottled("message:received", 60, 60_000)) {
+          acknowledge?.({ ok: false, error: "Too many requests" });
+          return;
+        }
+        if (!payload?.conversationId || !payload?.messageId) {
+          acknowledge?.({ ok: false, error: "Invalid message" });
+          return;
+        }
+
+        const message = await prisma.message.findFirst({
+          where: {
+            id: payload.messageId,
+            conversationId: payload.conversationId,
+            senderId: socket.data.userId,
+          },
+          include: {
+            sender: { select: { username: true } },
+          },
+        });
+        if (!message) {
+          acknowledge?.({ ok: false, error: "Message not found" });
+          return;
+        }
+
+        socket.to(payload.conversationId).emit("message:received", {
+          conversationId: message.conversationId,
+          senderId: message.senderId,
+          messageId: message.id,
+          senderUsername: message.sender.username,
+          content: message.content,
+          createdAt: message.createdAt.toISOString(),
+        });
+        acknowledge?.({ ok: true });
+      } catch (error) {
+        console.error("Socket message relay error", error);
+        acknowledge?.({ ok: false, error: "Unable to relay message" });
       }
-
-      if (payload.senderId !== socket.data.userId) return;
-      const conversation = await prisma.conversation.findFirst({
-        where: {
-          id: payload.conversationId,
-          participants: { some: { id: socket.data.userId } },
-        },
-        select: { id: true },
-      });
-      if (!conversation) return;
-
-      socket.to(payload.conversationId).emit("message:received", payload);
     });
   });
 
   server.listen(port, hostname, () => {
     console.log(`> CryptoChat ready on http://${hostname}:${port}`);
   });
+}).catch(async (error) => {
+  console.error("Failed to start CryptoChat", error);
+  await prisma.$disconnect();
+  process.exitCode = 1;
+});
+
+async function shutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  console.log(`> ${signal} received, shutting down CryptoChat`);
+
+  io?.close();
+  await new Promise((resolve) => {
+    if (!server?.listening) {
+      resolve();
+      return;
+    }
+    server.close(resolve);
+  });
+  await prisma.$disconnect();
+}
+
+process.once("SIGINT", () => {
+  shutdown("SIGINT").then(() => process.exit(0));
+});
+process.once("SIGTERM", () => {
+  shutdown("SIGTERM").then(() => process.exit(0));
 });

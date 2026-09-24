@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { isValidEncryptedMessagePayload } from "@/lib/validation";
 
 // GET messages for a conversation
 export async function GET(req: Request) {
@@ -8,6 +10,11 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const conversationId = searchParams.get("conversationId");
     const userId = searchParams.get("userId");
+    const cursor = searchParams.get("cursor");
+    const requestedLimit = Number(searchParams.get("limit") || "50");
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(Math.floor(requestedLimit), 1), 100)
+      : 50;
     const sessionUser = await getSessionUser();
 
     if (!conversationId || !userId) {
@@ -43,9 +50,29 @@ export async function GET(req: Request) {
       );
     }
 
+    let cursorFilter = {};
+    if (cursor) {
+      const separator = cursor.indexOf("|");
+      if (separator <= 0) {
+        return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
+      }
+      const createdAt = new Date(cursor.slice(0, separator));
+      const id = cursor.slice(separator + 1);
+      if (Number.isNaN(createdAt.getTime()) || !id) {
+        return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
+      }
+      cursorFilter = {
+        OR: [
+          { createdAt: { lt: createdAt } },
+          { createdAt, id: { lt: id } },
+        ],
+      };
+    }
+
     const messages = await prisma.message.findMany({
       where: {
         conversationId,
+        ...cursorFilter,
       },
       include: {
         sender: {
@@ -55,12 +82,18 @@ export async function GET(req: Request) {
           },
         },
       },
-      orderBy: {
-        createdAt: "asc",
-      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
     });
 
-    return NextResponse.json(messages);
+    const hasMore = messages.length > limit;
+    const page = messages.slice(0, limit).reverse();
+    const oldest = page[0];
+    const nextCursor = hasMore && oldest
+      ? `${oldest.createdAt.toISOString()}|${oldest.id}`
+      : null;
+
+    return NextResponse.json({ messages: page, nextCursor });
   } catch (error) {
     console.error(error);
     return NextResponse.json(
@@ -83,24 +116,12 @@ export async function POST(req: Request) {
       );
     }
 
-    if (typeof content !== "string" || content.length > 100_000) {
-      return NextResponse.json(
-        { error: "Message payload is invalid or too large" },
-        { status: 400 }
-      );
-    }
-
-    try {
-      const payload = JSON.parse(content);
-      if (
-        payload?.version !== "v1" ||
-        typeof payload.ciphertext !== "string" ||
-        typeof payload.iv !== "string" ||
-        typeof payload.encryptedKey !== "string"
-      ) {
-        throw new Error("Invalid encrypted payload");
-      }
-    } catch {
+    if (
+      !isValidEncryptedMessagePayload(
+        content,
+        `conversation:${conversationId}:sender:${senderId}`
+      )
+    ) {
       return NextResponse.json(
         { error: "Message must contain a valid encrypted payload" },
         { status: 400 }
@@ -112,6 +133,16 @@ export async function POST(req: Request) {
         { error: "Unauthorized" },
         { status: 401 }
       );
+    }
+
+    const rateLimitResponse = enforceRateLimit(req, {
+      name: "message-create",
+      limit: 60,
+      windowMs: 60 * 1000,
+      key: sessionUser.userId,
+    });
+    if (rateLimitResponse) {
+      return rateLimitResponse;
     }
 
     // SECURITY: Verify sender is actually in the conversation

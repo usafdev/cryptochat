@@ -9,11 +9,11 @@ datasource db {
 }
 
 model User {
-  id           String  @id @default(cuid())
-  email        String  @unique
-  username     String  @unique
-  passwordHash String
-  publicKey    String?
+  id                  String  @id @default(cuid())
+  email               String  @unique
+  username            String  @unique
+  passwordHash        String
+  publicKey           String?
   encryptedPrivateKey String?
 
   createdAt DateTime @default(now())
@@ -25,12 +25,14 @@ model User {
 
   sentFriendRequests     FriendRequest[] @relation("SentFriendRequests")
   receivedFriendRequests FriendRequest[] @relation("ReceivedFriendRequests")
+  sessions               Session[]
 }
 
 model Conversation {
   id      String  @id @default(cuid())
   name    String?
   isGroup Boolean @default(false)
+  directKey String? @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -52,6 +54,21 @@ model Message {
 
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   conversationId String
+
+  @@index([conversationId, createdAt])
+  @@index([senderId, createdAt])
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, expiresAt])
 }
 
 model FriendRequest {
@@ -67,4 +84,8 @@ model FriendRequest {
   sender User @relation("SentFriendRequests", fields: [senderId], references: [id])
 
   receiver User @relation("ReceivedFriendRequests", fields: [receiverId], references: [id])
+
+  @@index([receiverId, status, createdAt])
+  @@index([senderId, status, createdAt])
+  @@index([senderId, receiverId, status])
 }

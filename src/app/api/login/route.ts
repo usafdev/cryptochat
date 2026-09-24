@@ -2,8 +2,18 @@ import { prisma } from "@/lib/prisma";
 import { createSessionCookie } from "@/lib/session";
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
+  const rateLimitResponse = enforceRateLimit(req, {
+    name: "login",
+    limit: 10,
+    windowMs: 15 * 60 * 1000,
+  });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   try {
     const { username, password } = await req.json();
 
@@ -52,7 +62,7 @@ export async function POST(req: Request) {
       encryptedPrivateKey: user.encryptedPrivateKey ?? null,
     });
 
-    response.cookies.set(createSessionCookie(user.id, user.username));
+    response.cookies.set(await createSessionCookie(user.id, user.username));
     return response;
   } catch (error) {
     console.error(error);
