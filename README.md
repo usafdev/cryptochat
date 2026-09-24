@@ -18,6 +18,9 @@ CryptoChat is a privacy-focused messaging platform designed for secure one-to-on
 - Request validation, authorization checks, and rate limiting
 
 ![CryptoChat chat screen](assets/Screenshot_1.png)
+![CryptoChat chat screen](assets/Screenshot_4.png)
+![CryptoChat chat screen](assets/Screenshot_5.png)
+
 
 ## Requirements
 
